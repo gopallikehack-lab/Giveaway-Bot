@@ -1,117 +1,120 @@
 """
-GpsirEra Premium Giveaway Bot
-=============================
-Full-featured Telegram giveaway bot with:
-- Force-join verification (2 channels)
-- Active Giveaway system (custom/preset duration, join tracking, auto winner pick)
-- Premium Account section (admin-editable)
-- Owner Info section
-- Admin panel (add giveaway, set premium content)
+GpsirEra Giveaway Bot — Cron endpoint.
+Must be pinged every ~1 minute by an EXTERNAL scheduler (e.g. cron-job.org, free)
+because Vercel's own free-tier Cron only runs once per day, which is useless
+for 15/20-minute giveaways.
 
-Run on Termux:
-    pkg install python -y
-    pip install python-telegram-bot==20.7
-    python bot.py
-
-Fill in the CONFIG section below before running.
+GET /api/cron?key=<CRON_SECRET>
 """
 
 import json
-import logging
 import os
 import random
 import time
+from http.server import BaseHTTPRequestHandler
+from urllib import request as urlrequest
+from urllib.parse import urlparse, parse_qs
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.constants import ParseMode
-from telegram.ext import (
-    Application,
-    CallbackQueryHandler,
-    CommandHandler,
-    ContextTypes,
-    ConversationHandler,
-    MessageHandler,
-    filters,
-)
+BOT_TOKEN = os.environ["BOT_TOKEN"]
+API = f"https://api.telegram.org/bot{BOT_TOKEN}"
+RESULTS_CHANNEL_ID = int(os.environ["RESULTS_CHANNEL_ID"])
+CRON_SECRET = os.environ.get("CRON_SECRET", "")
 
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    level=logging.INFO,
-)
-log = logging.getLogger("GpsirEra-GiveawayBot")
-
-# ============================== CONFIG =====================================
-
-BOT_TOKEN = "8813950560:AAGyOg4n4_mqVljNmCsOX04DQveZZ9HW-j8"
-
-# Telegram user IDs who can access the admin panel. Add your own numeric ID.
-# (Send /myid to the bot once it's running to get yours.)
-ADMIN_IDS = [8932695749]
-
-# Channel where END-OF-GIVEAWAY winner results get posted.
-# Bot must be an ADMIN in this channel. Use the numeric chat id (starts with -100...).
-RESULTS_CHANNEL_ID = -1001234567890
-
-# Force-join channels. Bot must be an ADMIN in both to verify membership.
-# chat_id must be the numeric id of the channel (get it via /chatid trick below,
-# or by adding @RawDataBot / @userinfobot to the channel briefly, or forwarding
-# any channel post to @userinfobot).
-FORCE_JOIN_CHANNELS = [
-    {
-        "name": "Gpsir ha4k Channel",
-        "chat_id": -1001111111111,          # <-- replace with real numeric id
-        "link": "https://t.me/+74PC9DgmtN84NzFl",
-    },
-    {
-        "name": "Gpsir Chat Group",
-        "chat_id": -1002222222222,          # <-- replace with real numeric id
-        "link": "https://t.me/+VXs73pFfyEphMzJl",
-    },
-]
-
-OWNER_INFO_TEXT = (
-    "👑 <b>GpsirEra</b>\n\n"
-    "Full Name: <b>Gopal Parmar</b>\n"
-    "🛠 Specialist Coder\n"
-    "💻 Open Bullet Expert\n"
-    "🤖 AI Coder\n"
-    "🔌 API Builder\n\n"
-    "Need help? Contact me 👉 @GpsirEra"
-)
-
-DATA_FILE = os.path.join(os.path.dirname(__file__), "data.json")
-
-# Conversation states
-GW_TITLE, GW_DESC, GW_DURATION, GW_WINNERS = range(4)
-PREMIUM_TEXT_STATE = 100
-
-# ============================== STORAGE =====================================
-
-_DEFAULT_DATA = {"giveaways": {}, "next_id": 1, "premium_text": ""}
+UPSTASH_URL = os.environ["UPSTASH_REDIS_REST_URL"]
+UPSTASH_TOKEN = os.environ["UPSTASH_REDIS_REST_TOKEN"]
 
 
-def load_data() -> dict:
-    if not os.path.exists(DATA_FILE):
-        save_data(_DEFAULT_DATA)
-        return json.loads(json.dumps(_DEFAULT_DATA))
-    with open(DATA_FILE, "r", encoding="utf-8") as f:
-        return json.load(f)
+def redis_cmd(*args):
+    req = urlrequest.Request(
+        UPSTASH_URL,
+        data=json.dumps(list(args)).encode(),
+        headers={"Authorization": f"Bearer {UPSTASH_TOKEN}", "Content-Type": "application/json"},
+        method="POST",
+    )
+    with urlrequest.urlopen(req, timeout=10) as resp:
+        return json.loads(resp.read()).get("result")
 
 
-def save_data(data: dict) -> None:
-    with open(DATA_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
+def get_json(key, default=None):
+    val = redis_cmd("GET", key)
+    return json.loads(val) if val else default
 
 
-def is_admin(user_id: int) -> bool:
-    return user_id in ADMIN_IDS
+def set_json(key, value):
+    redis_cmd("SET", key, json.dumps(value))
 
 
-# ============================== FORCE JOIN =====================================
+def send_message(chat_id, text):
+    req = urlrequest.Request(
+        f"{API}/sendMessage",
+        data=json.dumps({"chat_id": chat_id, "text": text, "parse_mode": "HTML"}).encode(),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urlrequest.urlopen(req, timeout=10) as resp:
+            return json.loads(resp.read())
+    except Exception as e:
+        print(f"Telegram send error: {e}")
 
-async def check_membership(user_id: int, context: ContextTypes.DEFAULT_TYPE) -> list:
-    """Returns list of channels the user has NOT joined yet."""
-    not_joined = []
+
+def end_giveaway(gid, gw):
+    gw["status"] = "ended"
+    joiners = gw["joiners"]
+    n_winners = min(gw["winners_count"], len(joiners))
+    winners = random.sample(joiners, n_winners) if n_winners > 0 else []
+    gw["winners"] = winners
+    set_json(f"giveaway:{gid}", gw)
+
+    if winners:
+        winner_lines = "\n".join(
+            f"🏆 {w['name']} (@{w['username']})" if w["username"] else f"🏆 {w['name']} (id: {w['id']})"
+            for w in winners
+        )
+    else:
+        winner_lines = "No one joined this giveaway. 😔"
+
+    result_text = (
+        f"🎉 <b>Giveaway Ended: {gw['title']}</b>\n\n"
+        f"👥 Total Participants: {len(joiners)}\n\n<b>Winners:</b>\n{winner_lines}\n\nCongratulations! 🎊"
+    )
+    send_message(RESULTS_CHANNEL_ID, result_text)
+    for w in winners:
+        send_message(
+            w["id"],
+            f"🎉 Congratulations! You won the giveaway <b>{gw['title']}</b>!\n\nContact @GpsirEra to claim your prize.",
+        )
+
+
+class handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        query = parse_qs(urlparse(self.path).query)
+        key = query.get("key", [""])[0]
+        if not CRON_SECRET or key != CRON_SECRET:
+            self.send_response(401)
+            self.end_headers()
+            self.wfile.write(b"Unauthorized")
+            return
+
+        active_ids = get_json("active_ids", [])
+        now = time.time()
+        still_active = []
+        ended = 0
+        for gid in active_ids:
+            gw = get_json(f"giveaway:{gid}")
+            if not gw or gw.get("status") != "active":
+                continue
+            if gw["end_time"] <= now:
+                end_giveaway(gid, gw)
+                ended += 1
+            else:
+                still_active.append(gid)
+        set_json("active_ids", still_active)
+
+        self.send_response(200)
+        self.send_header("Content-type", "text/plain")
+        self.end_headers()
+        self.wfile.write(f"OK - checked {len(active_ids)}, ended {ended}".encode())    not_joined = []
     for ch in FORCE_JOIN_CHANNELS:
         try:
             member = await context.bot.get_chat_member(ch["chat_id"], user_id)
