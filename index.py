@@ -269,6 +269,7 @@ def handle_admin_command(chat_id, user_id):
                 [btn("🎯 Add Giveaway", data="admin_add_gw")],
                 [btn("💎 Set Premium Content", data="admin_set_premium")],
                 [btn("📊 List Active Giveaways", data="admin_list_gw")],
+                [btn("🗑️ Delete Giveaway", data="admin_delete_gw")],
             ]
         ),
     )
@@ -495,6 +496,49 @@ def handle_callback(callback):
                 remaining = max(0, int(gw["end_time"] - time.time()))
                 lines.append(f"🎁 <b>{gw['title']}</b> — 👥 {len(gw['joiners'])} joined — ⏳ {remaining // 60}m left")
         edit_message(chat_id, message_id, "📊 <b>Active Giveaways</b>\n\n" + ("\n\n".join(lines) if lines else "😴 No active giveaways right now."))
+        return
+
+    if data == "admin_delete_gw":
+        answer_callback(callback["id"])
+        if not is_admin(user_id):
+            return
+        active_ids = get_json("active_ids", [])
+        rows = []
+        for gid in active_ids:
+            gw = get_json(f"giveaway:{gid}")
+            if gw and gw["status"] == "active":
+                rows.append([btn(f"🗑️ {gw['title']}", data=f"delconfirm_{gid}")])
+        if not rows:
+            edit_message(chat_id, message_id, "😴 No active giveaways to delete.")
+            return
+        rows.append([btn("🔙 Cancel", data="admin_list_gw")])
+        edit_message(chat_id, message_id, "🗑️ <b>Select a giveaway to delete:</b>", kb(rows))
+        return
+
+    if data.startswith("delconfirm_"):
+        gid = data.split("_", 1)[1]
+        answer_callback(callback["id"])
+        if not is_admin(user_id):
+            return
+        gw = get_json(f"giveaway:{gid}")
+        title = gw["title"] if gw else "this giveaway"
+        rows = [
+            [btn("✅ Yes, Delete", data=f"delyes_{gid}"), btn("❌ No, Keep It", data="admin_delete_gw")],
+        ]
+        edit_message(chat_id, message_id, f"⚠️ Delete <b>{title}</b>? This cannot be undone.", kb(rows))
+        return
+
+    if data.startswith("delyes_"):
+        gid = data.split("_", 1)[1]
+        if not is_admin(user_id):
+            answer_callback(callback["id"])
+            return
+        delete_key(f"giveaway:{gid}")
+        active_ids = get_json("active_ids", [])
+        active_ids = [g for g in active_ids if g != gid]
+        set_json("active_ids", active_ids)
+        answer_callback(callback["id"], "🗑️ Giveaway deleted.", alert=True)
+        edit_message(chat_id, message_id, "✅ <b>Giveaway deleted successfully.</b>")
         return
 
     if data in ("dur_15", "dur_20", "dur_custom"):
