@@ -19,7 +19,7 @@ BOT_TOKEN = os.environ["BOT_TOKEN"]
 API = f"https://api.telegram.org/bot{BOT_TOKEN}"
 
 ADMIN_IDS = [int(x) for x in os.environ.get("ADMIN_IDS", "").split(",") if x.strip()]
-RESULTS_CHANNEL_ID = int(os.environ["RESULTS_CHANNEL_ID"])
+RESULTS_CHANNEL_ID = os.environ.get("RESULTS_CHANNEL_ID")  # no longer used for posting; kept optional
 
 CHANNEL1_ID = int(os.environ["CHANNEL1_ID"])
 CHANNEL2_ID = int(os.environ["CHANNEL2_ID"])
@@ -30,13 +30,15 @@ FORCE_JOIN_CHANNELS = [
 ]
 
 OWNER_INFO_TEXT = (
-    "👑 <b>GpsirEra</b>\n\n"
-    "Full Name: <b>Gopal Parmar</b>\n"
-    "🛠 Specialist Coder\n"
-    "💻 Open Bullet Expert\n"
-    "🤖 AI Coder\n"
-    "🔌 API Builder\n\n"
-    "Need help? Contact me 👉 @GpsirEra"
+    "👑━━━━━━━━━━━━━👑\n"
+    "🌟 <b>G P S I R E R A</b> 🌟\n"
+    "👑━━━━━━━━━━━━━👑\n\n"
+    "🧑‍💻 Full Name: <b>Gopal Parmar</b>\n\n"
+    "🛠️ <i>Specialist Coder</i>\n"
+    "💣 <i>Open Bullet Expert</i>\n"
+    "🤖 <i>AI Coder</i>\n"
+    "🔌 <i>API Builder</i>\n\n"
+    "📩 Need help? Contact me 👉 <b>@GpsirEra</b> ✨"
 )
 
 UPSTASH_URL = os.environ["UPSTASH_REDIS_REST_URL"]
@@ -132,22 +134,38 @@ def check_membership(user_id):
 
 
 def force_join_keyboard(not_joined):
-    rows = [[btn(f"➕ Join {ch['name']}", url=ch["link"])] for ch in not_joined]
+    rows = [[btn(f"📢 Join {ch['name']}", url=ch["link"])] for ch in not_joined]
     rows.append([btn("✅ I've Joined — Verify", data="verify_join")])
     return kb(rows)
+
+
+FORCE_JOIN_TEXT = (
+    "🔐━━━━━━━━━━━━━🔐\n"
+    "🚨 <b>Verification Required</b> 🚨\n"
+    "🔐━━━━━━━━━━━━━🔐\n\n"
+    "🚀 Join the channel(s) below to unlock premium access:\n\n"
+    "👉 Then tap <b>✅ I've Joined</b>"
+)
 
 
 def main_menu_keyboard():
     return kb(
         [
-            [btn("🎁 Active Giveaway", data="menu_active")],
+            [btn("🎉 Active Giveaways", data="menu_active")],
             [btn("💎 Premium Account", data="menu_premium")],
-            [btn("👤 Owner Info", data="menu_owner")],
+            [btn("👑 Owner Info", data="menu_owner")],
         ]
     )
 
 
-WELCOME_TEXT = "✨ <b>Welcome to GpsirEra Premium Bot</b> ✨\n\nYou're verified! Choose an option below 👇"
+WELCOME_TEXT = (
+    "✨━━━━━━━━━━━━━━✨\n"
+    "🌟 <b>GpsirEra Premium Bot</b> 🌟\n"
+    "✨━━━━━━━━━━━━━━✨\n\n"
+    "✅ <b>Verified!</b> Welcome aboard 🚀\n\n"
+    "<blockquote>🔒 Secure, fair &amp; transparent — every giveaway is decided by true random draw.</blockquote>\n\n"
+    "👇 <i>Choose an option below to continue</i>"
+)
 
 
 def back_kb(target="menu_back"):
@@ -176,10 +194,15 @@ def giveaway_detail_text(gw):
     remaining = max(0, int(gw["end_time"] - time.time()))
     mins, secs = divmod(remaining, 60)
     return (
-        f"🎁 <b>{gw['title']}</b>\n\n{gw['desc']}\n\n"
-        f"🏆 Winners: {gw['winners_count']}\n"
-        f"👥 Joined: {len(gw['joiners'])}\n"
-        f"⏳ Time Left: {mins}m {secs}s"
+        f"🎉━━━━━━━━━━━━🎉\n"
+        f"🎁 <b>{gw['title']}</b>\n"
+        f"🎉━━━━━━━━━━━━🎉\n\n"
+        f"📋 {gw['desc']}\n\n"
+        f"🏆 Winners: <b>{gw['winners_count']}</b>\n"
+        f"👥 Participants: <b>{len(gw['joiners'])}</b>\n"
+        f"⏳ Time Left: <b>{mins}m {secs}s</b>\n\n"
+        f"<blockquote>🔒 <b>100% Fair &amp; Secure</b> — winner(s) picked by true random draw. No manipulation, no cheating possible.</blockquote>\n\n"
+        f"🍀 <i>Tap below to join!</i>"
     )
 
 
@@ -200,14 +223,27 @@ def end_giveaway(gid, gw):
         winner_lines = "No one joined this giveaway. 😔"
 
     result_text = (
-        f"🎉 <b>Giveaway Ended: {gw['title']}</b>\n\n"
-        f"👥 Total Participants: {len(joiners)}\n\n<b>Winners:</b>\n{winner_lines}\n\nCongratulations! 🎊"
+        f"🎊━━━━━━━━━━━━🎊\n"
+        f"🏁 <b>Giveaway Ended!</b>\n"
+        f"🎯 {gw['title']}\n"
+        f"🎊━━━━━━━━━━━━🎊\n\n"
+        f"👥 Total Participants: <b>{len(joiners)}</b>\n\n"
+        f"🏆 <b>Winners:</b>\n{winner_lines}\n\n"
+        f"<blockquote>🔒 Selected via secure random draw inside the bot — 100% fair, zero cheating possible.</blockquote>\n\n"
+        f"🎉 Congratulations to all winners! 🎉"
     )
-    send_message(RESULTS_CHANNEL_ID, result_text)
+
+    # Result stays inside the bot — sent to admins in their bot chat, NOT posted to any channel.
+    for admin_id in ADMIN_IDS:
+        send_message(admin_id, result_text)
+
     for w in winners:
         send_message(
             w["id"],
-            f"🎉 Congratulations! You won the giveaway <b>{gw['title']}</b>!\n\nContact @GpsirEra to claim your prize.",
+            f"🎊━━━━━━━━━━━━🎊\n<b>Congratulations!</b> 🎊\n\n"
+            f"You won the giveaway 🎁 <b>{gw['title']}</b>!\n\n"
+            f"<blockquote>🔒 Picked by secure random draw — fair &amp; verified.</blockquote>\n\n"
+            f"📩 Contact @GpsirEra to claim your prize.",
         )
 
 
@@ -216,11 +252,7 @@ def end_giveaway(gid, gw):
 def handle_start(chat_id, user_id):
     not_joined = check_membership(user_id)
     if not_joined:
-        send_message(
-            chat_id,
-            "🔐 <b>Verification Required</b>\n\nPlease join the channel(s) below, then tap <b>I've Joined</b>.",
-            force_join_keyboard(not_joined),
-        )
+        send_message(chat_id, FORCE_JOIN_TEXT, force_join_keyboard(not_joined))
         return
     send_message(chat_id, WELCOME_TEXT, main_menu_keyboard())
 
@@ -231,12 +263,12 @@ def handle_admin_command(chat_id, user_id):
         return
     send_message(
         chat_id,
-        "🛠 <b>Admin Panel</b>\n\nChoose an action:",
+        "🛠️━━━━━━━━━━━━🛠️\n⚙️ <b>Admin Control Panel</b> ⚙️\n🛠️━━━━━━━━━━━━🛠️\n\n<i>Choose an action:</i>",
         kb(
             [
-                [btn("➕ Add Giveaway", data="admin_add_gw")],
+                [btn("🎯 Add Giveaway", data="admin_add_gw")],
                 [btn("💎 Set Premium Content", data="admin_set_premium")],
-                [btn("📋 List Active Giveaways", data="admin_list_gw")],
+                [btn("📊 List Active Giveaways", data="admin_list_gw")],
             ]
         ),
     )
@@ -279,10 +311,10 @@ def handle_text_message(chat_id, user_id, text):
         set_admin_state(user_id, {"step": "duration", "data": data})
         send_message(
             chat_id,
-            "⏳ Choose the giveaway duration:",
+            "⏳ <b>Choose the giveaway duration:</b>",
             kb(
                 [
-                    [btn("⏱ 15 min", data="dur_15"), btn("⏱ 20 min", data="dur_20")],
+                    [btn("⏱️ 15 min", data="dur_15"), btn("⏱️ 20 min", data="dur_20")],
                     [btn("✏️ Custom Time", data="dur_custom")],
                 ]
             ),
@@ -312,7 +344,7 @@ def handle_text_message(chat_id, user_id, text):
         clear_admin_state(user_id)
         send_message(
             chat_id,
-            f"✅ Giveaway <b>{data['title']}</b> created and is now live for {data['duration_min']} minutes!",
+            f"🎉 <b>Giveaway Live!</b>\n\n🎁 {data['title']}\n⏳ Running for {data['duration_min']} minutes\n\n✅ It's now visible under Active Giveaways.",
         )
 
     elif step == "premium_text":
@@ -353,11 +385,7 @@ def handle_callback(callback):
         not_joined = check_membership(user_id)
         if not_joined:
             answer_callback(callback["id"], "❌ You haven't joined all channels yet.", alert=True)
-            edit_message(
-                chat_id, message_id,
-                "🔐 <b>Verification Required</b>\n\nPlease join the channel(s) below, then tap <b>I've Joined</b>.",
-                force_join_keyboard(not_joined),
-            )
+            edit_message(chat_id, message_id, FORCE_JOIN_TEXT, force_join_keyboard(not_joined))
             return
         answer_callback(callback["id"], "✅ Verified!")
         edit_message(chat_id, message_id, WELCOME_TEXT, main_menu_keyboard())
@@ -376,7 +404,13 @@ def handle_callback(callback):
     if data == "menu_premium":
         answer_callback(callback["id"])
         premium = get_json("premium_text") or "No premium account info has been added yet."
-        text = f"💎 <b>Premium Account</b>\n\n{premium}\n\n📩 Contact Me: @GpsirEra"
+        text = (
+            f"💎━━━━━━━━━━━━💎\n"
+            f"🌟 <b>Premium Account</b> 🌟\n"
+            f"💎━━━━━━━━━━━━💎\n\n"
+            f"{premium}\n\n"
+            f"📩 Contact Me: <b>@GpsirEra</b>"
+        )
         edit_message(chat_id, message_id, text, back_kb())
         return
 
@@ -389,10 +423,14 @@ def handle_callback(callback):
             if gw and gw["status"] == "active":
                 rows.append([btn(f"🎁 {gw['title']}", data=f"view_gw_{gid}")])
         if not rows:
-            edit_message(chat_id, message_id, "🎁 <b>Active Giveaway</b>\n\nNo giveaways running right now.", back_kb())
+            edit_message(
+                chat_id, message_id,
+                "🎉 <b>Active Giveaways</b>\n\n😔 No giveaways running right now. Check back soon!",
+                back_kb(),
+            )
             return
         rows.append([btn("🔙 Back", data="menu_back")])
-        edit_message(chat_id, message_id, "🎁 <b>Active Giveaway</b>\n\nSelect one to view details:", kb(rows))
+        edit_message(chat_id, message_id, "🎉 <b>Active Giveaways</b>\n\n👇 Select one to view details:", kb(rows))
         return
 
     if data.startswith("view_gw_"):
@@ -455,8 +493,8 @@ def handle_callback(callback):
             gw = get_json(f"giveaway:{gid}")
             if gw and gw["status"] == "active":
                 remaining = max(0, int(gw["end_time"] - time.time()))
-                lines.append(f"🎁 {gw['title']} — {len(gw['joiners'])} joined — {remaining // 60}m left")
-        edit_message(chat_id, message_id, "\n".join(lines) or "No active giveaways.")
+                lines.append(f"🎁 <b>{gw['title']}</b> — 👥 {len(gw['joiners'])} joined — ⏳ {remaining // 60}m left")
+        edit_message(chat_id, message_id, "📊 <b>Active Giveaways</b>\n\n" + ("\n\n".join(lines) if lines else "😴 No active giveaways right now."))
         return
 
     if data in ("dur_15", "dur_20", "dur_custom"):
