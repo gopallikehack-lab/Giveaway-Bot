@@ -1,1 +1,2 @@
-python-telegram-bot==20.7
+# No external packages needed â€” this bot only uses Python's stdlib
+# (http.server, urllib, json) so Vercel's build stays fast and import-error-free.
