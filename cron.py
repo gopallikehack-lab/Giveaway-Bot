@@ -19,7 +19,7 @@ from urllib.parse import urlparse, parse_qs
 BOT_TOKEN = os.environ["BOT_TOKEN"]
 API = f"https://api.telegram.org/bot{BOT_TOKEN}"
 ADMIN_IDS = [int(x) for x in os.environ.get("ADMIN_IDS", "").split(",") if x.strip()]
-RESULTS_CHANNEL_ID = int(os.environ["RESULTS_CHANNEL_ID"])  # the results group's numeric chat_id
+RESULTS_CHANNEL_ID = os.environ.get("RESULTS_CHANNEL_ID")  # no longer used automatically; kept optional
 CRON_SECRET = os.environ.get("CRON_SECRET", "")
 
 UPSTASH_URL = os.environ["UPSTASH_REDIS_REST_URL"]
@@ -50,8 +50,10 @@ def strip_html(text):
     return re.sub(r"<[^>]+>", "", text)
 
 
-def send_message(chat_id, text):
+def send_message(chat_id, text, keyboard=None):
     payload = {"chat_id": chat_id, "text": text, "parse_mode": "HTML"}
+    if keyboard:
+        payload["reply_markup"] = keyboard
     req = urlrequest.Request(
         f"{API}/sendMessage",
         data=json.dumps(payload).encode(),
@@ -69,6 +71,8 @@ def send_message(chat_id, text):
         print(f"sendMessage failed for {chat_id}: {res}")
         # Fallback: retry as plain text in case HTML parsing was the problem.
         payload_plain = {"chat_id": chat_id, "text": strip_html(text)}
+        if keyboard:
+            payload_plain["reply_markup"] = keyboard
         req2 = urlrequest.Request(
             f"{API}/sendMessage",
             data=json.dumps(payload_plain).encode(),
@@ -84,34 +88,82 @@ def send_message(chat_id, text):
     return res
 
 
-def end_giveaway(gid, gw):
-    gw["status"] = "ended"
+def mark_awaiting_draw(gid, gw):
+    """Giveaway's timer ran out. Don't pick a winner or post anywhere yet —
+    just freeze the participant list (with serial numbers) and hand control
+    to the admin via a 'Lucky Serial Roulette' button."""
+    gw["status"] = "awaiting_draw"
     joiners = gw["joiners"]
-    n_winners = min(gw["winners_count"], len(joiners))
-    winners = random.sample(joiners, n_winners) if n_winners > 0 else []
-    gw["winners"] = winners
     set_json(f"giveaway:{gid}", gw)
 
-    # Winner block with full chat-id detail — for admin + group only
-    if winners:
-        winner_lines_full = "\n\n".join(
-            f"▸ <b>{w['name']}</b>\n"
-            f"    Username: {'@' + w['username'] if w['username'] else '<i>not set</i>'}\n"
-            f"    Chat ID: <code>{w['id']}</code>"
-            for w in winners
-        )
-        winner_lines_public = "\n".join(
-            f"🏆 <b>{w['name']}</b>" + (f" (@{w['username']})" if w["username"] else "")
-            for w in winners
-        )
-    else:
-        winner_lines_full = "No one joined this giveaway."
-        winner_lines_public = "No one joined this giveaway."
+    awaiting_ids = get_json("awaiting_draw_ids", [])
+    if gid not in awaiting_ids:
+        awaiting_ids.append(gid)
+        set_json("awaiting_draw_ids", awaiting_ids)
 
-    # Full participant list — admin only
     if joiners:
         participant_lines = "\n".join(
-            f"{i + 1}. {j['name']} — @{j['username'] if j['username'] else 'no_username'} — ID: {j['id']}"
+            f"<b>{i + 1}.</b> {j['name']} — @{j['username'] if j['username'] else 'no_username'} — ID: <code>{j['id']}</code>"
+            for i, j in enumerate(joiners)
+        )
+    else:
+        participant_lines = "No one joined."
+
+    text = (
+        f"◆ ──────────────── ◆\n"
+        f"⏰ <b>GIVEAWAY TIME UP</b>\n"
+        f"◆ ──────────────── ◆\n\n"
+        f"🎯 <b>{gw['title']}</b>\n"
+        f"👥 Participants: <b>{len(joiners)}</b>\n"
+        f"🏆 Winners to pick: <b>{gw['winners_count']}</b>\n\n"
+        f"<b>FULL PARTICIPANT LIST</b>\n"
+        f"──────────────────\n"
+        f"{participant_lines}\n"
+        f"──────────────────\n\n"
+        f"Tap below when you're ready to draw 👇"
+    )
+    keyboard = {"inline_keyboard": [[{"text": "🎰 Lucky Serial Roulette", "callback_data": f"roulette_{gid}"}]]}
+
+    for admin_id in ADMIN_IDS:
+        try:
+            send_message(admin_id, text, keyboard)
+        except Exception as e:
+            print(f"Admin notify crashed for {admin_id}: {e}")
+
+
+class handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        query = parse_qs(urlparse(self.path).query)
+        key = query.get("key", [""])[0]
+        if not CRON_SECRET or key != CRON_SECRET:
+            self.send_response(401)
+            self.end_headers()
+            self.wfile.write(b"Unauthorized")
+            return
+
+        active_ids = get_json("active_ids", [])
+        now = time.time()
+        still_active = []
+        ended = 0
+        for gid in active_ids:
+            try:
+                gw = get_json(f"giveaway:{gid}")
+                if not gw or gw.get("status") != "active":
+                    continue
+                if gw["end_time"] <= now:
+                    mark_awaiting_draw(gid, gw)
+                    ended += 1
+                else:
+                    still_active.append(gid)
+            except Exception as e:
+                print(f"Error processing giveaway {gid}: {e}")
+                still_active.append(gid)  # keep it, retry next minute instead of losing it
+        set_json("active_ids", still_active)
+
+        self.send_response(200)
+        self.send_header("Content-type", "text/plain")
+        self.end_headers()
+        self.wfile.write(f"OK - checked {len(active_ids)}, ended {ended}".encode())            f"{i + 1}. {j['name']} — @{j['username'] if j['username'] else 'no_username'} — ID: {j['id']}"
             for i, j in enumerate(joiners)
         )
     else:
