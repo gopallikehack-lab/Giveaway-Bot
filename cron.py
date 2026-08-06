@@ -67,8 +67,10 @@ def end_giveaway(gid, gw):
     set_json(f"giveaway:{gid}", gw)
 
     if winners:
-        winner_lines = "\n".join(
-            f"🏆 {w['name']} (@{w['username']})" if w["username"] else f"🏆 {w['name']} (id: {w['id']})"
+        winner_lines = "\n\n".join(
+            f"🏆 <b>{w['name']}</b>\n"
+            f"   • Username: {'@' + w['username'] if w['username'] else '<i>no username set</i>'}\n"
+            f"   • Chat ID: <code>{w['id']}</code>"
             for w in winners
         )
     else:
