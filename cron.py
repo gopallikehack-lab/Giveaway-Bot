@@ -92,15 +92,30 @@ def end_giveaway(gid, gw):
     gw["winners"] = winners
     set_json(f"giveaway:{gid}", gw)
 
+    # Winner block with full chat-id detail — for admin + group only
     if winners:
-        winner_lines = "\n\n".join(
+        winner_lines_full = "\n\n".join(
             f"▸ <b>{w['name']}</b>\n"
             f"    Username: {'@' + w['username'] if w['username'] else '<i>not set</i>'}\n"
             f"    Chat ID: <code>{w['id']}</code>"
             for w in winners
         )
+        winner_lines_public = "\n".join(
+            f"🏆 <b>{w['name']}</b>" + (f" (@{w['username']})" if w["username"] else "")
+            for w in winners
+        )
     else:
-        winner_lines = "No one joined this giveaway."
+        winner_lines_full = "No one joined this giveaway."
+        winner_lines_public = "No one joined this giveaway."
+
+    # Full participant list — admin only
+    if joiners:
+        participant_lines = "\n".join(
+            f"{i + 1}. {j['name']} — @{j['username'] if j['username'] else 'no_username'} — ID: {j['id']}"
+            for i, j in enumerate(joiners)
+        )
+    else:
+        participant_lines = "No one joined."
 
     result_text = (
         f"◆ ──────────────── ◆\n"
@@ -110,12 +125,28 @@ def end_giveaway(gid, gw):
         f"👥 Participants: <b>{len(joiners)}</b>\n\n"
         f"<b>WINNERS</b>\n"
         f"──────────────────\n"
-        f"{winner_lines}\n"
+        f"{winner_lines_full}\n"
         f"──────────────────\n\n"
         f"🔒 <i>Selected via secure random draw inside the bot. Verified fair, zero manipulation.</i>"
     )
 
-    # Post full result (name + username + chat id) to the results group
+    admin_text = (
+        result_text
+        + f"\n\n<b>ALL PARTICIPANTS ({len(joiners)})</b>\n"
+        + f"──────────────────\n{participant_lines}"
+    )
+
+    broadcast_text = (
+        f"◆ ──────────────── ◆\n"
+        f"🏁 <b>GIVEAWAY ENDED</b>\n"
+        f"◆ ──────────────── ◆\n\n"
+        f"🎯 <b>{gw['title']}</b>\n\n"
+        f"<b>Winner(s):</b>\n{winner_lines_public}\n\n"
+        f"🔒 <i>Picked via secure random draw — verified fair.</i>\n\n"
+        f"Didn't win this time? More giveaways coming — stay tuned! 🎉"
+    )
+
+    # 1) Post full result to the results group
     try:
         group_res = send_message(RESULTS_CHANNEL_ID, result_text)
         group_failed = not group_res.get("ok")
@@ -123,40 +154,37 @@ def end_giveaway(gid, gw):
         print(f"Group post crashed: {e}")
         group_res, group_failed = {"ok": False, "error": str(e)}, True
 
-    # DM each winner individually
-    delivery_failures = []
-    for w in winners:
-        try:
-            res = send_message(
-                w["id"],
-                f"◆ ──────────────── ◆\n"
-                f"🏆 <b>YOU WON!</b>\n"
-                f"◆ ──────────────── ◆\n\n"
-                f"Giveaway: <b>{gw['title']}</b>\n\n"
-                f"🔒 <i>Picked via secure random draw — verified fair.</i>\n\n"
-                f"📩 Contact <b>@GpsirEra</b> to claim your prize.",
-            )
-            if not res.get("ok"):
-                delivery_failures.append(w)
-        except Exception as e:
-            print(f"Winner DM crashed for {w['id']}: {e}")
-            delivery_failures.append(w)
-
-    # Always notify admins in bot chat too, as a reliable backup — and surface any failures loudly.
-    admin_note = result_text
+    # 2) Notify admins in bot chat — with the FULL participant list, not just winners
+    admin_text_final = admin_text
     if group_failed:
-        admin_note += f"\n\n⚠️ <b>Could not post to the results group</b> ({RESULTS_CHANNEL_ID}). Response: {group_res}"
-    if delivery_failures:
-        fail_lines = "\n".join(f"• {w['name']} (id: {w['id']})" for w in delivery_failures)
-        admin_note += (
-            f"\n\n⚠️ <b>Could not DM these winners</b> (they may have blocked the bot, "
-            f"or never pressed Start before joining):\n{fail_lines}"
-        )
+        admin_text_final += f"\n\n⚠️ <b>Could not post to the results group</b> ({RESULTS_CHANNEL_ID}). Response: {group_res}"
     for admin_id in ADMIN_IDS:
         try:
-            send_message(admin_id, admin_note)
+            send_message(admin_id, admin_text_final)
         except Exception as e:
             print(f"Admin notify crashed for {admin_id}: {e}")
+
+    # 3) Broadcast the winner announcement to every user who has ever used the bot
+    all_users = get_json("all_users", [])
+    broadcast_failures = 0
+    for uid in all_users:
+        try:
+            res = send_message(uid, broadcast_text)
+            if not res.get("ok"):
+                broadcast_failures += 1
+        except Exception as e:
+            print(f"Broadcast crashed for {uid}: {e}")
+            broadcast_failures += 1
+
+    if broadcast_failures and ADMIN_IDS:
+        try:
+            send_message(
+                ADMIN_IDS[0],
+                f"ℹ️ Broadcast sent to {len(all_users) - broadcast_failures}/{len(all_users)} users "
+                f"({broadcast_failures} unreachable — blocked bot or never started it).",
+            )
+        except Exception as e:
+            print(f"Broadcast summary notify crashed: {e}")
 
 
 class handler(BaseHTTPRequestHandler):
