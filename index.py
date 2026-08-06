@@ -1,9 +1,16 @@
 """
-GpsirEra Premium Giveaway Bot — Vercel webhook handler.
-Self-contained (no external pip packages) to avoid Vercel Python import issues.
-Storage: Upstash Redis (free tier) via its REST API.
+GpsirEra Premium Giveaway Bot — single-file Vercel webhook handler.
+Fully self-contained (stdlib only) to avoid Vercel Python import issues.
 
-Deploy notes are in README.md at the repo root.
+NO CRON. NO EXTERNAL SCHEDULER. Everything is manual and admin-controlled:
+  - Admin creates a giveaway (title, details, duration shown as info only)
+  - Users join from inside the bot
+  - Whenever the admin wants, they open /roulette (or /admin → Manage Giveaways),
+    pick the giveaway, and tap "Draw Winner" — the bot instantly picks winner(s)
+    and shows their FULL details (name, username, chat ID) to the admin ONLY.
+    Nothing is ever posted publicly or to any group/channel.
+
+Storage: Upstash Redis (free tier) via its REST API.
 """
 
 import json
@@ -14,40 +21,32 @@ import time
 from http.server import BaseHTTPRequestHandler
 from urllib import request as urlrequest
 
-# ============================== CONFIG (all from Vercel Env Vars) ==================
+# ============================== CONFIG (Vercel Env Vars) ==================
 
 BOT_TOKEN = os.environ["BOT_TOKEN"]
 API = f"https://api.telegram.org/bot{BOT_TOKEN}"
 
 ADMIN_IDS = [int(x) for x in os.environ.get("ADMIN_IDS", "").split(",") if x.strip()]
-RESULTS_CHANNEL_ID = os.environ.get("RESULTS_CHANNEL_ID")  # currently unused, kept optional
 
 CHANNEL1_ID = int(os.environ["CHANNEL1_ID"])
 CHANNEL2_ID = int(os.environ["CHANNEL2_ID"])
-
 FORCE_JOIN_CHANNELS = [
     {"name": "Gpsir ha4k Channel", "chat_id": CHANNEL1_ID, "link": "https://t.me/+74PC9DgmtN84NzFl"},
     {"name": "Gpsir Chat Group", "chat_id": CHANNEL2_ID, "link": "https://t.me/+VXs73pFfyEphMzJl"},
 ]
 
-OWNER_INFO_TEXT = (
-    "◆ ──────────────── ◆\n"
-    "👑 <b>OWNER</b>\n"
-    "◆ ──────────────── ◆\n\n"
-    "<b>Gopal Parmar</b>\n"
-    "<i>GpsirEra</i>\n\n"
-    "▸ Specialist Coder\n"
-    "▸ Open Bullet Expert\n"
-    "▸ AI Coder\n"
-    "▸ API Builder\n\n"
-    "──────────────────\n"
-    "📩 <b>@GpsirEra</b>"
-)
-
 WELCOME_PHOTO_URL = "https://i.ibb.co/8DS5NgNw/file-00000000b4c4820883d3048f8bede975.png"
 
 UPSTASH_URL = os.environ["UPSTASH_REDIS_REST_URL"]
 UPSTASH_TOKEN = os.environ["UPSTASH_REDIS_REST_TOKEN"]
+
+# ============================== TEXT STYLE (single place to tweak the look) ========
+
+def header(title):
+    return f"『 {title} 』\n▬▬▬▬▬▬▬▬▬▬▬▬▬▬"
+
+
+DIV = "▬▬▬▬▬▬▬▬▬▬▬▬▬▬"
 
 # ============================== STORAGE (Upstash Redis REST) ==================
 
@@ -77,6 +76,10 @@ def delete_key(key):
 
 # ============================== TELEGRAM API HELPERS ==================
 
+def strip_html(text):
+    return re.sub(r"<[^>]+>", "", text)
+
+
 def tg_call(method, payload):
     req = urlrequest.Request(
         f"{API}/{method}",
@@ -92,10 +95,6 @@ def tg_call(method, payload):
         return {"ok": False, "error": str(e)}
 
 
-def strip_html(text):
-    return re.sub(r"<[^>]+>", "", text)
-
-
 def send_message(chat_id, text, keyboard=None):
     payload = {"chat_id": chat_id, "text": text, "parse_mode": "HTML"}
     if keyboard:
@@ -103,14 +102,10 @@ def send_message(chat_id, text, keyboard=None):
     res = tg_call("sendMessage", payload)
     if not res.get("ok"):
         print(f"sendMessage failed for {chat_id}: {res}")
-        # Fallback: retry as plain text in case HTML parsing was the problem,
-        # so a formatting glitch never silently swallows a delivery.
         payload_plain = {"chat_id": chat_id, "text": strip_html(text)}
         if keyboard:
             payload_plain["reply_markup"] = keyboard
         res = tg_call("sendMessage", payload_plain)
-        if not res.get("ok"):
-            print(f"Fallback sendMessage also failed for {chat_id}: {res}")
     return res
 
 
@@ -148,6 +143,18 @@ def btn(text, data=None, url=None):
     return {"text": text, "callback_data": data} if data else {"text": text, "url": url}
 
 
+def back_kb(target="menu_back"):
+    return kb([[btn("🔙 Back", data=target)]])
+
+
+def cancel_kb():
+    return kb([[btn("🔙 Cancel", data="admin_cancel")]])
+
+
+def is_admin(user_id):
+    return user_id in ADMIN_IDS
+
+
 # ============================== FORCE JOIN ==================
 
 def check_membership(user_id):
@@ -162,16 +169,42 @@ def check_membership(user_id):
 
 def force_join_keyboard(not_joined):
     rows = [[btn(f"📢 Join {ch['name']}", url=ch["link"])] for ch in not_joined]
-    rows.append([btn("✅ I've Joined — Verify", data="verify_join")])
+    rows.append([btn("✅ Verify", data="verify_join")])
     return kb(rows)
 
 
 FORCE_JOIN_TEXT = (
-    "◆ ──────────────── ◆\n"
-    "🔐 <b>ACCESS LOCKED</b>\n"
-    "◆ ──────────────── ◆\n\n"
-    "Join the channel(s) below to unlock the bot ▾\n\n"
-    "Then tap <b>✅ Verify</b>"
+    f"{header('ACCESS LOCKED')}\n\n"
+    "🔐 Join the channel(s) below to unlock the bot.\n\n"
+    "Then tap <b>✅ Verify</b>."
+)
+
+WELCOME_TEXT = (
+    f"{header('MAIN MENU')}\n\n"
+    "✅ Verified — you're in.\n\n"
+    "Select an option below 👇"
+)
+
+WELCOME_CAPTION = (
+    f"{header('GPSIRERA')}\n\n"
+    "✦ Premium Giveaway &amp; Rewards Bot ✦\n\n"
+    "🎁 Fair, verified giveaways\n"
+    "💎 Premium account access\n"
+    "🔒 Every winner picked by true random draw\n\n"
+    f"{DIV}\n"
+    "Maintained by <b>@GpsirEra</b>"
+)
+
+OWNER_INFO_TEXT = (
+    f"{header('OWNER')}\n\n"
+    "<b>Gopal Parmar</b>\n"
+    "<i>GpsirEra</i>\n\n"
+    "▸ Specialist Coder\n"
+    "▸ Open Bullet Expert\n"
+    "▸ AI Coder\n"
+    "▸ API Builder\n\n"
+    f"{DIV}\n"
+    "📩 <b>@GpsirEra</b>"
 )
 
 
@@ -185,28 +218,7 @@ def main_menu_keyboard():
     )
 
 
-WELCOME_TEXT = (
-    "◆ ──────────────── ◆\n"
-    "👑 <b>GPSIRERA — MAIN MENU</b>\n"
-    "◆ ──────────────── ◆\n\n"
-    "✅ Verified — you're in.\n\n"
-    "Select an option below ▾"
-)
-
-
-def back_kb(target="menu_back"):
-    return kb([[btn("🔙 Back", data=target)]])
-
-
-def cancel_kb():
-    return kb([[btn("🔙 Cancel", data="admin_cancel")]])
-
-
 # ============================== GIVEAWAY HELPERS ==================
-
-def is_admin(user_id):
-    return user_id in ADMIN_IDS
-
 
 def get_admin_state(user_id):
     return get_json(f"admin_state:{user_id}")
@@ -220,194 +232,45 @@ def clear_admin_state(user_id):
     delete_key(f"admin_state:{user_id}")
 
 
-def track_user(user_id):
-    users = get_json("all_users", [])
-    if user_id not in users:
-        users.append(user_id)
-        set_json("all_users", users)
-
-
-RESULTS_GROUP_LINK = "https://t.me/+XdEsAIp53pZjNzQ1"
-
-
 def giveaway_detail_text(gw):
     remaining = max(0, int(gw["end_time"] - time.time()))
     mins, secs = divmod(remaining, 60)
     return (
-        f"◆ ──────────────── ◆\n"
-        f"🎁 <b>{gw['title']}</b>\n"
-        f"◆ ──────────────── ◆\n\n"
+        f"{header(gw['title'])}\n\n"
         f"{gw['desc']}\n\n"
         f"▸ Winners: <b>{gw['winners_count']}</b>\n"
         f"▸ Participants: <b>{len(gw['joiners'])}</b>\n"
         f"▸ Time Left: <b>{mins}m {secs}s</b>\n\n"
-        f"🔒 <i>Verified fair — winner picked live by the admin via random serial draw.</i>"
+        f"🔒 <i>Winner picked live by the admin via random draw — never public.</i>"
     )
 
 
-def draw_roulette_winners(gid, gw):
-    """Admin tapped 🎰 Lucky Serial Roulette — actually pick the winner(s) now."""
-    joiners = gw["joiners"]
-    n_winners = min(gw["winners_count"], len(joiners))
-    if n_winners > 0:
-        winner_indices = random.sample(range(len(joiners)), n_winners)
-    else:
-        winner_indices = []
-    winners = [joiners[i] for i in winner_indices]
-    gw["status"] = "completed"
-    gw["winners"] = winners
-    set_json(f"giveaway:{gid}", gw)
-
-    awaiting_ids = get_json("awaiting_draw_ids", [])
-    awaiting_ids = [g for g in awaiting_ids if g != gid]
-    set_json("awaiting_draw_ids", awaiting_ids)
-
-    if winners:
-        winner_lines = "\n\n".join(
-            f"🏆 <b>Serial #{winner_indices[k] + 1} — {w['name']}</b>\n"
-            f"    Username: {'@' + w['username'] if w['username'] else '<i>not set</i>'}\n"
-            f"    Chat ID: <code>{w['id']}</code>"
-            for k, w in enumerate(winners)
-        )
-    else:
-        winner_lines = "No one joined this giveaway."
-
-    return (
-        f"◆ ──────────────── ◆\n"
-        f"🎰 <b>LUCKY SERIAL ROULETTE</b> 🎰\n"
-        f"◆ ──────────────── ◆\n\n"
-        f"🎯 <b>{gw['title']}</b>\n"
-        f"👥 Participants: <b>{len(joiners)}</b>\n\n"
-        f"🌀 <i>Spinning the wheel…</i>\n\n"
-        f"<b>WINNER{'S' if len(winners) != 1 else ''}</b>\n"
-        f"──────────────────\n"
-        f"{winner_lines}\n"
-        f"──────────────────\n\n"
-        f"🤞🥀"
+def participant_list_text(joiners):
+    if not joiners:
+        return "No one has joined yet."
+    return "\n".join(
+        f"<b>{i + 1}.</b> {j['name']} — @{j['username'] if j['username'] else 'no_username'} — ID: <code>{j['id']}</code>"
+        for i, j in enumerate(joiners)
     )
 
 
-# ============================== ROUTES: /start, /admin, /myid ==================
-
-WELCOME_CAPTION = (
-    "◆ ──────────────── ◆\n"
-    "👑 <b>G P S I R E R A</b>\n"
-    "◆ ──────────────── ◆\n\n"
-    "<i>Premium Giveaway &amp; Rewards Bot</i>\n\n"
-    "▸ 🎁 Fair, verified giveaways\n"
-    "▸ 💎 Premium account access\n"
-    "▸ 🔒 100% random, zero manipulation\n\n"
-    "──────────────────\n"
-    "Maintained by <b>@GpsirEra</b>"
-)
-
-
-def handle_start(chat_id, user_id):
-    track_user(user_id)
-    send_photo(chat_id, WELCOME_PHOTO_URL, WELCOME_CAPTION)
-    not_joined = check_membership(user_id)
-    if not_joined:
-        send_message(chat_id, FORCE_JOIN_TEXT, force_join_keyboard(not_joined))
-        return
-    send_message(chat_id, WELCOME_TEXT, main_menu_keyboard())
-
-
-def handle_admin_command(chat_id, user_id):
-    if not is_admin(user_id):
-        send_message(chat_id, "⛔ You are not authorized to use the admin panel.")
-        return
-    send_message(
-        chat_id,
-        "◆ ──────────────── ◆\n⚙️ <b>ADMIN PANEL</b>\n◆ ──────────────── ◆\n\nSelect an action ▾",
-        kb(
-            [
-                [btn("🎯 Add Giveaway", data="admin_add_gw")],
-                [btn("💎 Set Premium Content", data="admin_set_premium")],
-                [btn("📊 List Active Giveaways", data="admin_list_gw")],
-                [btn("🗑️ Delete Giveaway", data="admin_delete_gw")],
-            ]
-        ),
+def manage_detail_text(gw):
+    status_label = "🟢 Active" if gw["status"] == "active" else "✅ Completed"
+    text = (
+        f"{header(gw['title'])}\n\n"
+        f"Status: {status_label}\n"
+        f"👥 Participants: <b>{len(gw['joiners'])}</b>\n"
+        f"🏆 Winners to pick: <b>{gw['winners_count']}</b>\n\n"
+        f"<b>PARTICIPANTS</b>\n{DIV}\n"
+        f"{participant_list_text(gw['joiners'])}\n{DIV}"
     )
-
-
-# ============================== TEXT MESSAGE (admin conversation state machine) ====
-
-def handle_text_message(chat_id, user_id, text):
-    if text == "/start":
-        handle_start(chat_id, user_id)
-        return
-    if text == "/admin":
-        handle_admin_command(chat_id, user_id)
-        return
-    if text == "/myid":
-        send_message(chat_id, f"Your Telegram ID: <code>{user_id}</code>")
-        return
-    if text == "/cancel":
-        clear_admin_state(user_id)
-        send_message(chat_id, "❌ Cancelled.")
-        return
-
-    if not is_admin(user_id):
-        return  # ignore random text from non-admins
-
-    state = get_admin_state(user_id)
-    if not state:
-        return
-
-    step = state["step"]
-    data = state.get("data", {})
-
-    if step == "title":
-        data["title"] = text.strip()
-        set_admin_state(user_id, {"step": "desc", "data": data})
-        send_message(chat_id, "📝 Now send the <b>giveaway details</b> (prize, rules, whatever you want shown):", cancel_kb())
-
-    elif step == "desc":
-        data["desc"] = text.strip()
-        set_admin_state(user_id, {"step": "duration", "data": data})
-        send_message(
-            chat_id,
-            "⏳ <b>Choose the giveaway duration:</b>",
-            kb(
-                [
-                    [btn("⏱️ 15 min", data="dur_15"), btn("⏱️ 20 min", data="dur_20")],
-                    [btn("✏️ Custom Time", data="dur_custom")],
-                    [btn("🔙 Cancel", data="admin_cancel")],
-                ]
-            ),
+    if gw["status"] == "completed" and gw.get("winners"):
+        winner_lines = "\n".join(
+            f"🏆 {w['name']} (@{w['username'] if w['username'] else 'no_username'}) — ID: {w['id']}"
+            for w in gw["winners"]
         )
-
-    elif step == "custom_duration":
-        try:
-            minutes = int(text.strip())
-            if minutes <= 0:
-                raise ValueError
-        except ValueError:
-            send_message(chat_id, "❌ Please send a valid positive number of minutes.", cancel_kb())
-            return
-        data["duration_min"] = minutes
-        set_admin_state(user_id, {"step": "winners", "data": data})
-        send_message(chat_id, "🏆 How many winners should this giveaway have? Send a number:", cancel_kb())
-
-    elif step == "winners":
-        try:
-            winners = int(text.strip())
-            if winners <= 0:
-                raise ValueError
-        except ValueError:
-            send_message(chat_id, "❌ Please send a valid positive number.", cancel_kb())
-            return
-        create_giveaway(data["title"], data["desc"], data["duration_min"], winners)
-        clear_admin_state(user_id)
-        send_message(
-            chat_id,
-            f"🎉 <b>Giveaway Live!</b>\n\n🎁 {data['title']}\n⏳ Running for {data['duration_min']} minutes\n\n✅ It's now visible under Active Giveaways.",
-        )
-
-    elif step == "premium_text":
-        set_json("premium_text", text.strip())
-        clear_admin_state(user_id)
-        send_message(chat_id, "✅ Premium Account content updated.")
+        text += f"\n\n<b>WINNER(S)</b>\n{DIV}\n{winner_lines}"
+    return text
 
 
 def create_giveaway(title, desc, duration_min, winners):
@@ -423,9 +286,175 @@ def create_giveaway(title, desc, duration_min, winners):
         "end_time": time.time() + duration_min * 60,
     }
     set_json(f"giveaway:{gid}", gw)
-    active_ids = get_json("active_ids", [])
-    active_ids.append(gid)
-    set_json("active_ids", active_ids)
+    all_ids = get_json("all_giveaway_ids", [])
+    all_ids.append(gid)
+    set_json("all_giveaway_ids", all_ids)
+
+
+def draw_winner(gid, gw):
+    """Instantly pick winner(s) — admin-only, never posted anywhere else."""
+    joiners = gw["joiners"]
+    n_winners = min(gw["winners_count"], len(joiners))
+    winners = random.sample(joiners, n_winners) if n_winners > 0 else []
+    gw["status"] = "completed"
+    gw["winners"] = winners
+    set_json(f"giveaway:{gid}", gw)
+
+    if winners:
+        winner_lines = "\n\n".join(
+            f"🏆 <b>{w['name']}</b>\n"
+            f"    Username: {'@' + w['username'] if w['username'] else '<i>not set</i>'}\n"
+            f"    Chat ID: <code>{w['id']}</code>"
+            for w in winners
+        )
+    else:
+        winner_lines = "No one joined this giveaway."
+
+    return (
+        f"{header('WINNER DRAWN')}\n\n"
+        f"🎯 <b>{gw['title']}</b>\n"
+        f"👥 Participants: <b>{len(joiners)}</b>\n\n"
+        f"🌀 <i>Drawing…</i>\n\n"
+        f"<b>WINNER{'S' if len(winners) != 1 else ''}</b>\n{DIV}\n"
+        f"{winner_lines}\n{DIV}\n\n"
+        f"🔒 <i>Visible only to you — nothing was posted publicly.</i>\n\n"
+        f"🤞🥀"
+    )
+
+
+# ============================== ROUTES: /start, /admin, /myid, /roulette ==================
+
+def handle_start(chat_id, user_id):
+    send_photo(chat_id, WELCOME_PHOTO_URL, WELCOME_CAPTION)
+    not_joined = check_membership(user_id)
+    if not_joined:
+        send_message(chat_id, FORCE_JOIN_TEXT, force_join_keyboard(not_joined))
+        return
+    send_message(chat_id, WELCOME_TEXT, main_menu_keyboard())
+
+
+def admin_menu_keyboard():
+    return kb(
+        [
+            [btn("🎯 Add Giveaway", data="admin_add_gw")],
+            [btn("💎 Set Premium Content", data="admin_set_premium")],
+            [btn("📋 Manage Giveaways", data="admin_manage")],
+        ]
+    )
+
+
+def handle_admin_command(chat_id, user_id):
+    if not is_admin(user_id):
+        send_message(chat_id, "⛔ You are not authorized to use the admin panel.")
+        return
+    send_message(chat_id, f"{header('ADMIN PANEL')}\n\nChoose an action:", admin_menu_keyboard())
+
+
+def manage_list_keyboard():
+    ids = get_json("all_giveaway_ids", [])
+    rows = []
+    for gid in reversed(ids):  # newest first
+        gw = get_json(f"giveaway:{gid}")
+        if not gw:
+            continue
+        icon = "🟢" if gw["status"] == "active" else "✅"
+        rows.append([btn(f"{icon} {gw['title']} ({len(gw['joiners'])} joined)", data=f"manage_{gid}")])
+    rows.append([btn("🔙 Cancel", data="admin_cancel")])
+    return rows
+
+
+def handle_roulette_command(chat_id, user_id):
+    if not is_admin(user_id):
+        return
+    rows = manage_list_keyboard()
+    if len(rows) == 1:
+        send_message(chat_id, "😴 No giveaways yet. Create one first with /admin → Add Giveaway.")
+        return
+    send_message(chat_id, f"{header('MANAGE GIVEAWAYS')}\n\nSelect one:", kb(rows))
+
+
+# ============================== TEXT MESSAGE (admin conversation state machine) ====
+
+def handle_text_message(chat_id, user_id, text):
+    text = (text or "").strip()
+    if text.startswith("/start"):
+        handle_start(chat_id, user_id)
+        return
+    if text.startswith("/admin"):
+        handle_admin_command(chat_id, user_id)
+        return
+    if text.startswith("/roulette"):
+        handle_roulette_command(chat_id, user_id)
+        return
+    if text.startswith("/myid"):
+        send_message(chat_id, f"Your Telegram ID: <code>{user_id}</code>")
+        return
+    if text.startswith("/cancel"):
+        clear_admin_state(user_id)
+        send_message(chat_id, "❌ Cancelled.")
+        return
+
+    if not is_admin(user_id):
+        return
+
+    state = get_admin_state(user_id)
+    if not state:
+        return
+    step = state["step"]
+    data = state.get("data", {})
+
+    if step == "title":
+        data["title"] = text
+        set_admin_state(user_id, {"step": "desc", "data": data})
+        send_message(chat_id, "📝 Now send the <b>giveaway details</b> (prize, rules, etc.):", cancel_kb())
+
+    elif step == "desc":
+        data["desc"] = text
+        set_admin_state(user_id, {"step": "duration", "data": data})
+        send_message(
+            chat_id,
+            "⏳ <b>Choose the giveaway duration</b> (shown to users as a countdown):",
+            kb(
+                [
+                    [btn("⏱️ 15 min", data="dur_15"), btn("⏱️ 20 min", data="dur_20")],
+                    [btn("✏️ Custom Time", data="dur_custom")],
+                    [btn("🔙 Cancel", data="admin_cancel")],
+                ]
+            ),
+        )
+
+    elif step == "custom_duration":
+        try:
+            minutes = int(text)
+            if minutes <= 0:
+                raise ValueError
+        except ValueError:
+            send_message(chat_id, "❌ Please send a valid positive number of minutes.", cancel_kb())
+            return
+        data["duration_min"] = minutes
+        set_admin_state(user_id, {"step": "winners", "data": data})
+        send_message(chat_id, "🏆 How many winners should this giveaway have? Send a number:", cancel_kb())
+
+    elif step == "winners":
+        try:
+            winners = int(text)
+            if winners <= 0:
+                raise ValueError
+        except ValueError:
+            send_message(chat_id, "❌ Please send a valid positive number.", cancel_kb())
+            return
+        create_giveaway(data["title"], data["desc"], data["duration_min"], winners)
+        clear_admin_state(user_id)
+        send_message(
+            chat_id,
+            f"🎉 <b>Giveaway Live!</b>\n\n🎁 {data['title']}\n\n"
+            f"✅ Visible under Active Giveaways now. Use /roulette anytime to draw a winner — no need to wait.",
+        )
+
+    elif step == "premium_text":
+        set_json("premium_text", text)
+        clear_admin_state(user_id)
+        send_message(chat_id, "✅ Premium Account content updated.")
 
 
 # ============================== CALLBACK QUERY HANDLING ==================
@@ -461,34 +490,23 @@ def handle_callback(callback):
     if data == "menu_premium":
         answer_callback(callback["id"])
         premium = get_json("premium_text") or "No premium account info has been added yet."
-        text = (
-            f"◆ ──────────────── ◆\n"
-            f"💎 <b>PREMIUM ACCESS</b>\n"
-            f"◆ ──────────────── ◆\n\n"
-            f"{premium}\n\n"
-            f"──────────────────\n"
-            f"📩 <b>@GpsirEra</b>"
-        )
+        text = f"{header('PREMIUM ACCESS')}\n\n{premium}\n\n{DIV}\n📩 <b>@GpsirEra</b>"
         edit_message(chat_id, message_id, text, back_kb())
         return
 
     if data == "menu_active":
         answer_callback(callback["id"])
-        active_ids = get_json("active_ids", [])
+        ids = get_json("all_giveaway_ids", [])
         rows = []
-        for gid in active_ids:
+        for gid in reversed(ids):
             gw = get_json(f"giveaway:{gid}")
             if gw and gw["status"] == "active":
                 rows.append([btn(f"🎁 {gw['title']}", data=f"view_gw_{gid}")])
         if not rows:
-            edit_message(
-                chat_id, message_id,
-                "🎉 <b>Active Giveaways</b>\n\n😔 No giveaways running right now. Check back soon!",
-                back_kb(),
-            )
+            edit_message(chat_id, message_id, f"{header('ACTIVE GIVEAWAYS')}\n\n😴 No giveaways running right now.", back_kb())
             return
         rows.append([btn("🔙 Back", data="menu_back")])
-        edit_message(chat_id, message_id, "🎉 <b>Active Giveaways</b>\n\n👇 Select one to view details:", kb(rows))
+        edit_message(chat_id, message_id, f"{header('ACTIVE GIVEAWAYS')}\n\nSelect one:", kb(rows))
         return
 
     if data.startswith("view_gw_"):
@@ -519,13 +537,12 @@ def handle_callback(callback):
             return
         gw["joiners"].append({"id": user_id, "name": user.get("first_name", "User"), "username": user.get("username", "")})
         set_json(f"giveaway:{gid}", gw)
-        track_user(user_id)
-        answer_callback(callback["id"], "✅ You joined this giveaway! Good luck 🍀", alert=True)
+        answer_callback(callback["id"], "✅ You joined! Good luck 🍀", alert=True)
         rows = [[btn("✅ Joined", data=f"join_{gid}")], [btn("🔙 Back", data="menu_active")]]
         edit_message(chat_id, message_id, giveaway_detail_text(gw), kb(rows))
         return
 
-    # ---- Admin-only callbacks ----
+    # ---- Admin-only ----
     if data == "admin_add_gw":
         answer_callback(callback["id"])
         if not is_admin(user_id):
@@ -547,61 +564,52 @@ def handle_callback(callback):
         if not is_admin(user_id):
             return
         clear_admin_state(user_id)
-        edit_message(
-            chat_id, message_id,
-            "◆ ──────────────── ◆\n⚙️ <b>ADMIN PANEL</b>\n◆ ──────────────── ◆\n\nSelect an action ▾",
-            kb(
-                [
-                    [btn("🎯 Add Giveaway", data="admin_add_gw")],
-                    [btn("💎 Set Premium Content", data="admin_set_premium")],
-                    [btn("📊 List Active Giveaways", data="admin_list_gw")],
-                    [btn("🗑️ Delete Giveaway", data="admin_delete_gw")],
-                ]
-            ),
-        )
+        edit_message(chat_id, message_id, f"{header('ADMIN PANEL')}\n\nChoose an action:", admin_menu_keyboard())
         return
 
-    if data == "admin_list_gw":
+    if data == "admin_manage":
         answer_callback(callback["id"])
         if not is_admin(user_id):
             return
-        active_ids = get_json("active_ids", [])
-        lines = []
-        for gid in active_ids:
-            gw = get_json(f"giveaway:{gid}")
-            if gw and gw["status"] == "active":
-                remaining = max(0, int(gw["end_time"] - time.time()))
-                lines.append(f"🎁 <b>{gw['title']}</b> — 👥 {len(gw['joiners'])} joined — ⏳ {remaining // 60}m left")
-
-        awaiting_ids = get_json("awaiting_draw_ids", [])
-        rows = []
-        for gid in awaiting_ids:
-            gw = get_json(f"giveaway:{gid}")
-            if gw and gw["status"] == "awaiting_draw":
-                rows.append([btn(f"🎰 Draw: {gw['title']}", data=f"roulette_{gid}")])
-
-        text = "📊 <b>Active Giveaways</b>\n\n" + ("\n\n".join(lines) if lines else "😴 No active giveaways right now.")
-        if rows:
-            text += "\n\n⏰ <b>Awaiting Draw</b>\n(tap a button below to run the roulette)"
-        rows.append([btn("🔙 Cancel", data="admin_cancel")])
-        edit_message(chat_id, message_id, text, kb(rows))
+        rows = manage_list_keyboard()
+        if len(rows) == 1:
+            edit_message(chat_id, message_id, "😴 No giveaways yet.", cancel_kb())
+            return
+        edit_message(chat_id, message_id, f"{header('MANAGE GIVEAWAYS')}\n\nSelect one:", kb(rows))
         return
 
-    if data == "admin_delete_gw":
+    if data.startswith("manage_"):
+        gid = data.split("_", 1)[1]
         answer_callback(callback["id"])
         if not is_admin(user_id):
             return
-        active_ids = get_json("active_ids", [])
-        rows = []
-        for gid in active_ids:
-            gw = get_json(f"giveaway:{gid}")
-            if gw and gw["status"] == "active":
-                rows.append([btn(f"🗑️ {gw['title']}", data=f"delconfirm_{gid}")])
-        if not rows:
-            edit_message(chat_id, message_id, "😴 No active giveaways to delete.", cancel_kb())
+        gw = get_json(f"giveaway:{gid}")
+        if not gw:
+            edit_message(chat_id, message_id, "⚠️ This giveaway no longer exists.", cancel_kb())
             return
-        rows.append([btn("🔙 Cancel", data="admin_list_gw")])
-        edit_message(chat_id, message_id, "🗑️ <b>Select a giveaway to delete:</b>", kb(rows))
+        rows = []
+        if gw["status"] == "active":
+            rows.append([btn("🎰 Draw Winner Now", data=f"draw_{gid}")])
+        rows.append([btn("🗑️ Delete", data=f"delconfirm_{gid}")])
+        rows.append([btn("🔙 Back", data="admin_manage")])
+        edit_message(chat_id, message_id, manage_detail_text(gw), kb(rows))
+        return
+
+    if data.startswith("draw_"):
+        gid = data.split("_", 1)[1]
+        if not is_admin(user_id):
+            answer_callback(callback["id"])
+            return
+        answer_callback(callback["id"], "🎰 Drawing…")
+        gw = get_json(f"giveaway:{gid}")
+        if not gw:
+            edit_message(chat_id, message_id, "⚠️ This giveaway no longer exists.", cancel_kb())
+            return
+        if gw["status"] != "active":
+            edit_message(chat_id, message_id, "⚠️ This giveaway's winner has already been drawn.", cancel_kb())
+            return
+        reveal_text = draw_winner(gid, gw)
+        edit_message(chat_id, message_id, reveal_text, cancel_kb())
         return
 
     if data.startswith("delconfirm_"):
@@ -611,9 +619,7 @@ def handle_callback(callback):
             return
         gw = get_json(f"giveaway:{gid}")
         title = gw["title"] if gw else "this giveaway"
-        rows = [
-            [btn("✅ Yes, Delete", data=f"delyes_{gid}"), btn("❌ No, Keep It", data="admin_delete_gw")],
-        ]
+        rows = [[btn("✅ Yes, Delete", data=f"delyes_{gid}"), btn("❌ No", data=f"manage_{gid}")]]
         edit_message(chat_id, message_id, f"⚠️ Delete <b>{title}</b>? This cannot be undone.", kb(rows))
         return
 
@@ -623,31 +629,11 @@ def handle_callback(callback):
             answer_callback(callback["id"])
             return
         delete_key(f"giveaway:{gid}")
-        active_ids = get_json("active_ids", [])
-        active_ids = [g for g in active_ids if g != gid]
-        set_json("active_ids", active_ids)
-        answer_callback(callback["id"], "🗑️ Giveaway deleted.", alert=True)
+        all_ids = get_json("all_giveaway_ids", [])
+        all_ids = [g for g in all_ids if g != gid]
+        set_json("all_giveaway_ids", all_ids)
+        answer_callback(callback["id"], "🗑️ Deleted.", alert=True)
         edit_message(chat_id, message_id, "✅ <b>Giveaway deleted successfully.</b>", cancel_kb())
-        return
-
-    if data.startswith("roulette_"):
-        gid = data.split("_", 1)[1]
-        if not is_admin(user_id):
-            answer_callback(callback["id"])
-            return
-        answer_callback(callback["id"], "🎰 Spinning…")
-        gw = get_json(f"giveaway:{gid}")
-        if not gw:
-            edit_message(chat_id, message_id, "⚠️ This giveaway no longer exists.")
-            return
-        if gw["status"] == "completed":
-            edit_message(chat_id, message_id, "⚠️ This giveaway's winner has already been drawn.")
-            return
-        if gw["status"] != "awaiting_draw":
-            edit_message(chat_id, message_id, "⚠️ This giveaway isn't ready for a draw yet.")
-            return
-        reveal_text = draw_roulette_winners(gid, gw)
-        edit_message(chat_id, message_id, reveal_text)
         return
 
     if data in ("dur_15", "dur_20", "dur_custom"):
