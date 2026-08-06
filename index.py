@@ -20,7 +20,7 @@ BOT_TOKEN = os.environ["BOT_TOKEN"]
 API = f"https://api.telegram.org/bot{BOT_TOKEN}"
 
 ADMIN_IDS = [int(x) for x in os.environ.get("ADMIN_IDS", "").split(",") if x.strip()]
-RESULTS_CHANNEL_ID = os.environ.get("RESULTS_CHANNEL_ID")  # no longer used for posting; kept optional
+RESULTS_CHANNEL_ID = int(os.environ["RESULTS_CHANNEL_ID"])  # numeric chat_id of the results group
 
 CHANNEL1_ID = int(os.environ["CHANNEL1_ID"])
 CHANNEL2_ID = int(os.environ["CHANNEL2_ID"])
@@ -31,15 +31,17 @@ FORCE_JOIN_CHANNELS = [
 ]
 
 OWNER_INFO_TEXT = (
-    "👑━━━━━━━━━━━━━👑\n"
-    "🌟 <b>G P S I R E R A</b> 🌟\n"
-    "👑━━━━━━━━━━━━━👑\n\n"
-    "🧑‍💻 Full Name: <b>Gopal Parmar</b>\n\n"
-    "🛠️ <i>Specialist Coder</i>\n"
-    "💣 <i>Open Bullet Expert</i>\n"
-    "🤖 <i>AI Coder</i>\n"
-    "🔌 <i>API Builder</i>\n\n"
-    "📩 Need help? Contact me 👉 <b>@GpsirEra</b> ✨"
+    "◆ ──────────────── ◆\n"
+    "👑 <b>OWNER</b>\n"
+    "◆ ──────────────── ◆\n\n"
+    "<b>Gopal Parmar</b>\n"
+    "<i>GpsirEra</i>\n\n"
+    "▸ Specialist Coder\n"
+    "▸ Open Bullet Expert\n"
+    "▸ AI Coder\n"
+    "▸ API Builder\n\n"
+    "──────────────────\n"
+    "📩 <b>@GpsirEra</b>"
 )
 
 WELCOME_PHOTO_URL = "https://i.ibb.co/8DS5NgNw/file-00000000b4c4820883d3048f8bede975.png"
@@ -165,11 +167,11 @@ def force_join_keyboard(not_joined):
 
 
 FORCE_JOIN_TEXT = (
-    "🔐━━━━━━━━━━━━━🔐\n"
-    "🚨 <b>Verification Required</b> 🚨\n"
-    "🔐━━━━━━━━━━━━━🔐\n\n"
-    "🚀 Join the channel(s) below to unlock premium access:\n\n"
-    "👉 Then tap <b>✅ I've Joined</b>"
+    "◆ ──────────────── ◆\n"
+    "🔐 <b>ACCESS LOCKED</b>\n"
+    "◆ ──────────────── ◆\n\n"
+    "Join the channel(s) below to unlock the bot ▾\n\n"
+    "Then tap <b>✅ Verify</b>"
 )
 
 
@@ -184,12 +186,11 @@ def main_menu_keyboard():
 
 
 WELCOME_TEXT = (
-    "✨━━━━━━━━━━━━━━✨\n"
-    "🌟 <b>GpsirEra Premium Bot</b> 🌟\n"
-    "✨━━━━━━━━━━━━━━✨\n\n"
-    "✅ <b>Verified!</b> Welcome aboard 🚀\n\n"
-    "<blockquote>🔒 Secure, fair &amp; transparent — every giveaway is decided by true random draw.</blockquote>\n\n"
-    "👇 <i>Choose an option below to continue</i>"
+    "◆ ──────────────── ◆\n"
+    "👑 <b>GPSIRERA — MAIN MENU</b>\n"
+    "◆ ──────────────── ◆\n\n"
+    "✅ Verified — you're in.\n\n"
+    "Select an option below ▾"
 )
 
 
@@ -223,15 +224,14 @@ def giveaway_detail_text(gw):
     remaining = max(0, int(gw["end_time"] - time.time()))
     mins, secs = divmod(remaining, 60)
     return (
-        f"🎉━━━━━━━━━━━━🎉\n"
+        f"◆ ──────────────── ◆\n"
         f"🎁 <b>{gw['title']}</b>\n"
-        f"🎉━━━━━━━━━━━━🎉\n\n"
-        f"📋 {gw['desc']}\n\n"
-        f"🏆 Winners: <b>{gw['winners_count']}</b>\n"
-        f"👥 Participants: <b>{len(gw['joiners'])}</b>\n"
-        f"⏳ Time Left: <b>{mins}m {secs}s</b>\n\n"
-        f"<blockquote>🔒 <b>100% Fair &amp; Secure</b> — winner(s) picked by true random draw. No manipulation, no cheating possible.</blockquote>\n\n"
-        f"🍀 <i>Tap below to join!</i>"
+        f"◆ ──────────────── ◆\n\n"
+        f"{gw['desc']}\n\n"
+        f"▸ Winners: <b>{gw['winners_count']}</b>\n"
+        f"▸ Participants: <b>{len(gw['joiners'])}</b>\n"
+        f"▸ Time Left: <b>{mins}m {secs}s</b>\n\n"
+        f"🔒 <i>Verified fair — true random draw, zero manipulation.</i>"
     )
 
 
@@ -245,60 +245,69 @@ def end_giveaway(gid, gw):
 
     if winners:
         winner_lines = "\n\n".join(
-            f"🏆 <b>{w['name']}</b>\n"
-            f"   • Username: {'@' + w['username'] if w['username'] else '<i>no username set</i>'}\n"
-            f"   • Chat ID: <code>{w['id']}</code>"
+            f"▸ <b>{w['name']}</b>\n"
+            f"    Username: {'@' + w['username'] if w['username'] else '<i>not set</i>'}\n"
+            f"    Chat ID: <code>{w['id']}</code>"
             for w in winners
         )
     else:
-        winner_lines = "No one joined this giveaway. 😔"
+        winner_lines = "No one joined this giveaway."
 
     result_text = (
-        f"🎊━━━━━━━━━━━━🎊\n"
-        f"🏁 <b>Giveaway Ended!</b>\n"
-        f"🎯 {gw['title']}\n"
-        f"🎊━━━━━━━━━━━━🎊\n\n"
-        f"👥 Total Participants: <b>{len(joiners)}</b>\n\n"
-        f"🏆 <b>Winners:</b>\n{winner_lines}\n\n"
-        f"<blockquote>🔒 Selected via secure random draw inside the bot — 100% fair, zero cheating possible.</blockquote>\n\n"
-        f"🎉 Congratulations to all winners! 🎉"
+        f"◆ ──────────────── ◆\n"
+        f"🏁 <b>GIVEAWAY RESULT</b>\n"
+        f"◆ ──────────────── ◆\n\n"
+        f"🎯 <b>{gw['title']}</b>\n"
+        f"👥 Participants: <b>{len(joiners)}</b>\n\n"
+        f"<b>WINNERS</b>\n"
+        f"──────────────────\n"
+        f"{winner_lines}\n"
+        f"──────────────────\n\n"
+        f"🔒 <i>Selected via secure random draw inside the bot. Verified fair, zero manipulation.</i>"
     )
 
-    # Result stays inside the bot — sent to admins in their bot chat, NOT posted to any channel.
+    group_res = send_message(RESULTS_CHANNEL_ID, result_text)
+    group_failed = not group_res.get("ok")
+
     delivery_failures = []
     for w in winners:
         res = send_message(
             w["id"],
-            f"🎊━━━━━━━━━━━━🎊\n<b>Congratulations!</b> 🎊\n\n"
-            f"You won the giveaway 🎁 <b>{gw['title']}</b>!\n\n"
-            f"<blockquote>🔒 Picked by secure random draw — fair &amp; verified.</blockquote>\n\n"
-            f"📩 Contact @GpsirEra to claim your prize.",
+            f"◆ ──────────────── ◆\n"
+            f"🏆 <b>YOU WON!</b>\n"
+            f"◆ ──────────────── ◆\n\n"
+            f"Giveaway: <b>{gw['title']}</b>\n\n"
+            f"🔒 <i>Picked via secure random draw — verified fair.</i>\n\n"
+            f"📩 Contact <b>@GpsirEra</b> to claim your prize.",
         )
         if not res.get("ok"):
             delivery_failures.append(w)
 
+    admin_note = result_text
+    if group_failed:
+        admin_note += f"\n\n⚠️ <b>Could not post to the results group</b> ({RESULTS_CHANNEL_ID}). Response: {group_res}"
     if delivery_failures:
         fail_lines = "\n".join(f"• {w['name']} (id: {w['id']})" for w in delivery_failures)
-        result_text += (
+        admin_note += (
             f"\n\n⚠️ <b>Could not DM these winners</b> (they may have blocked the bot, "
             f"or never pressed Start before joining):\n{fail_lines}"
         )
-
     for admin_id in ADMIN_IDS:
-        send_message(admin_id, result_text)
+        send_message(admin_id, admin_note)
 
 
 # ============================== ROUTES: /start, /admin, /myid ==================
 
 WELCOME_CAPTION = (
-    "🌟━━━━━━━━━━━━━🌟\n"
-    "👑 <b>GpsirEra Premium Bot</b> 👑\n"
-    "🌟━━━━━━━━━━━━━🌟\n\n"
-    "Your all-in-one hub for:\n"
-    "🎉 <b>Fair &amp; secure Giveaways</b>\n"
-    "💎 <b>Premium Accounts</b>\n\n"
-    "<blockquote>🔒 Every draw is 100% random — verified fair, no cheating possible.</blockquote>\n\n"
-    "Built &amp; maintained by <b>@GpsirEra</b> ✨"
+    "◆ ──────────────── ◆\n"
+    "👑 <b>G P S I R E R A</b>\n"
+    "◆ ──────────────── ◆\n\n"
+    "<i>Premium Giveaway &amp; Rewards Bot</i>\n\n"
+    "▸ 🎁 Fair, verified giveaways\n"
+    "▸ 💎 Premium account access\n"
+    "▸ 🔒 100% random, zero manipulation\n\n"
+    "──────────────────\n"
+    "Maintained by <b>@GpsirEra</b>"
 )
 
 
@@ -317,7 +326,7 @@ def handle_admin_command(chat_id, user_id):
         return
     send_message(
         chat_id,
-        "🛠️━━━━━━━━━━━━🛠️\n⚙️ <b>Admin Control Panel</b> ⚙️\n🛠️━━━━━━━━━━━━🛠️\n\n<i>Choose an action:</i>",
+        "◆ ──────────────── ◆\n⚙️ <b>ADMIN PANEL</b>\n◆ ──────────────── ◆\n\nSelect an action ▾",
         kb(
             [
                 [btn("🎯 Add Giveaway", data="admin_add_gw")],
@@ -461,11 +470,12 @@ def handle_callback(callback):
         answer_callback(callback["id"])
         premium = get_json("premium_text") or "No premium account info has been added yet."
         text = (
-            f"💎━━━━━━━━━━━━💎\n"
-            f"🌟 <b>Premium Account</b> 🌟\n"
-            f"💎━━━━━━━━━━━━💎\n\n"
+            f"◆ ──────────────── ◆\n"
+            f"💎 <b>PREMIUM ACCESS</b>\n"
+            f"◆ ──────────────── ◆\n\n"
             f"{premium}\n\n"
-            f"📩 Contact Me: <b>@GpsirEra</b>"
+            f"──────────────────\n"
+            f"📩 <b>@GpsirEra</b>"
         )
         edit_message(chat_id, message_id, text, back_kb())
         return
@@ -546,7 +556,7 @@ def handle_callback(callback):
         clear_admin_state(user_id)
         edit_message(
             chat_id, message_id,
-            "🛠️━━━━━━━━━━━━🛠️\n⚙️ <b>Admin Control Panel</b> ⚙️\n🛠️━━━━━━━━━━━━🛠️\n\n<i>Choose an action:</i>",
+            "◆ ──────────────── ◆\n⚙️ <b>ADMIN PANEL</b>\n◆ ──────────────── ◆\n\nSelect an action ▾",
             kb(
                 [
                     [btn("🎯 Add Giveaway", data="admin_add_gw")],
