@@ -10,6 +10,7 @@ GET /api/cron?key=<CRON_SECRET>
 import json
 import os
 import random
+import re
 import time
 from http.server import BaseHTTPRequestHandler
 from urllib import request as urlrequest
@@ -44,18 +45,42 @@ def set_json(key, value):
     redis_cmd("SET", key, json.dumps(value))
 
 
+def strip_html(text):
+    return re.sub(r"<[^>]+>", "", text)
+
+
 def send_message(chat_id, text):
+    payload = {"chat_id": chat_id, "text": text, "parse_mode": "HTML"}
     req = urlrequest.Request(
         f"{API}/sendMessage",
-        data=json.dumps({"chat_id": chat_id, "text": text, "parse_mode": "HTML"}).encode(),
+        data=json.dumps(payload).encode(),
         headers={"Content-Type": "application/json"},
         method="POST",
     )
     try:
         with urlrequest.urlopen(req, timeout=10) as resp:
-            return json.loads(resp.read())
+            res = json.loads(resp.read())
     except Exception as e:
         print(f"Telegram send error: {e}")
+        return {"ok": False, "error": str(e)}
+
+    if not res.get("ok"):
+        print(f"sendMessage failed for {chat_id}: {res}")
+        # Fallback: retry as plain text in case HTML parsing was the problem.
+        payload_plain = {"chat_id": chat_id, "text": strip_html(text)}
+        req2 = urlrequest.Request(
+            f"{API}/sendMessage",
+            data=json.dumps(payload_plain).encode(),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urlrequest.urlopen(req2, timeout=10) as resp2:
+                res = json.loads(resp2.read())
+        except Exception as e:
+            print(f"Fallback sendMessage also failed for {chat_id}: {e}")
+            res = {"ok": False, "error": str(e)}
+    return res
 
 
 def end_giveaway(gid, gw):
@@ -88,17 +113,27 @@ def end_giveaway(gid, gw):
     )
 
     # Result stays inside the bot — sent to admins in their bot chat, NOT posted to any channel.
-    for admin_id in ADMIN_IDS:
-        send_message(admin_id, result_text)
-
+    delivery_failures = []
     for w in winners:
-        send_message(
+        res = send_message(
             w["id"],
             f"🎊━━━━━━━━━━━━🎊\n<b>Congratulations!</b> 🎊\n\n"
             f"You won the giveaway 🎁 <b>{gw['title']}</b>!\n\n"
             f"<blockquote>🔒 Picked by secure random draw — fair &amp; verified.</blockquote>\n\n"
             f"📩 Contact @GpsirEra to claim your prize.",
         )
+        if not res.get("ok"):
+            delivery_failures.append(w)
+
+    if delivery_failures:
+        fail_lines = "\n".join(f"• {w['name']} (id: {w['id']})" for w in delivery_failures)
+        result_text += (
+            f"\n\n⚠️ <b>Could not DM these winners</b> (they may have blocked the bot, "
+            f"or never pressed Start before joining):\n{fail_lines}"
+        )
+
+    for admin_id in ADMIN_IDS:
+        send_message(admin_id, result_text)
 
 
 class handler(BaseHTTPRequestHandler):
@@ -116,14 +151,18 @@ class handler(BaseHTTPRequestHandler):
         still_active = []
         ended = 0
         for gid in active_ids:
-            gw = get_json(f"giveaway:{gid}")
-            if not gw or gw.get("status") != "active":
-                continue
-            if gw["end_time"] <= now:
-                end_giveaway(gid, gw)
-                ended += 1
-            else:
-                still_active.append(gid)
+            try:
+                gw = get_json(f"giveaway:{gid}")
+                if not gw or gw.get("status") != "active":
+                    continue
+                if gw["end_time"] <= now:
+                    end_giveaway(gid, gw)
+                    ended += 1
+                else:
+                    still_active.append(gid)
+            except Exception as e:
+                print(f"Error processing giveaway {gid}: {e}")
+                still_active.append(gid)  # keep it, retry next minute instead of losing it
         set_json("active_ids", still_active)
 
         self.send_response(200)
