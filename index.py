@@ -9,6 +9,7 @@ Deploy notes are in README.md at the repo root.
 import json
 import os
 import random
+import re
 import time
 from http.server import BaseHTTPRequestHandler
 from urllib import request as urlrequest
@@ -89,11 +90,26 @@ def tg_call(method, payload):
         return {"ok": False, "error": str(e)}
 
 
+def strip_html(text):
+    return re.sub(r"<[^>]+>", "", text)
+
+
 def send_message(chat_id, text, keyboard=None):
     payload = {"chat_id": chat_id, "text": text, "parse_mode": "HTML"}
     if keyboard:
         payload["reply_markup"] = keyboard
-    return tg_call("sendMessage", payload)
+    res = tg_call("sendMessage", payload)
+    if not res.get("ok"):
+        print(f"sendMessage failed for {chat_id}: {res}")
+        # Fallback: retry as plain text in case HTML parsing was the problem,
+        # so a formatting glitch never silently swallows a delivery.
+        payload_plain = {"chat_id": chat_id, "text": strip_html(text)}
+        if keyboard:
+            payload_plain["reply_markup"] = keyboard
+        res = tg_call("sendMessage", payload_plain)
+        if not res.get("ok"):
+            print(f"Fallback sendMessage also failed for {chat_id}: {res}")
+    return res
 
 
 def send_photo(chat_id, photo_url, caption=None):
@@ -181,6 +197,10 @@ def back_kb(target="menu_back"):
     return kb([[btn("🔙 Back", data=target)]])
 
 
+def cancel_kb():
+    return kb([[btn("🔙 Cancel", data="admin_cancel")]])
+
+
 # ============================== GIVEAWAY HELPERS ==================
 
 def is_admin(user_id):
@@ -245,17 +265,27 @@ def end_giveaway(gid, gw):
     )
 
     # Result stays inside the bot — sent to admins in their bot chat, NOT posted to any channel.
-    for admin_id in ADMIN_IDS:
-        send_message(admin_id, result_text)
-
+    delivery_failures = []
     for w in winners:
-        send_message(
+        res = send_message(
             w["id"],
             f"🎊━━━━━━━━━━━━🎊\n<b>Congratulations!</b> 🎊\n\n"
             f"You won the giveaway 🎁 <b>{gw['title']}</b>!\n\n"
             f"<blockquote>🔒 Picked by secure random draw — fair &amp; verified.</blockquote>\n\n"
             f"📩 Contact @GpsirEra to claim your prize.",
         )
+        if not res.get("ok"):
+            delivery_failures.append(w)
+
+    if delivery_failures:
+        fail_lines = "\n".join(f"• {w['name']} (id: {w['id']})" for w in delivery_failures)
+        result_text += (
+            f"\n\n⚠️ <b>Could not DM these winners</b> (they may have blocked the bot, "
+            f"or never pressed Start before joining):\n{fail_lines}"
+        )
+
+    for admin_id in ADMIN_IDS:
+        send_message(admin_id, result_text)
 
 
 # ============================== ROUTES: /start, /admin, /myid ==================
@@ -329,7 +359,7 @@ def handle_text_message(chat_id, user_id, text):
     if step == "title":
         data["title"] = text.strip()
         set_admin_state(user_id, {"step": "desc", "data": data})
-        send_message(chat_id, "📝 Now send the <b>giveaway details</b> (prize, rules, whatever you want shown):")
+        send_message(chat_id, "📝 Now send the <b>giveaway details</b> (prize, rules, whatever you want shown):", cancel_kb())
 
     elif step == "desc":
         data["desc"] = text.strip()
@@ -341,6 +371,7 @@ def handle_text_message(chat_id, user_id, text):
                 [
                     [btn("⏱️ 15 min", data="dur_15"), btn("⏱️ 20 min", data="dur_20")],
                     [btn("✏️ Custom Time", data="dur_custom")],
+                    [btn("🔙 Cancel", data="admin_cancel")],
                 ]
             ),
         )
@@ -351,11 +382,11 @@ def handle_text_message(chat_id, user_id, text):
             if minutes <= 0:
                 raise ValueError
         except ValueError:
-            send_message(chat_id, "❌ Please send a valid positive number of minutes.")
+            send_message(chat_id, "❌ Please send a valid positive number of minutes.", cancel_kb())
             return
         data["duration_min"] = minutes
         set_admin_state(user_id, {"step": "winners", "data": data})
-        send_message(chat_id, "🏆 How many winners should this giveaway have? Send a number:")
+        send_message(chat_id, "🏆 How many winners should this giveaway have? Send a number:", cancel_kb())
 
     elif step == "winners":
         try:
@@ -363,7 +394,7 @@ def handle_text_message(chat_id, user_id, text):
             if winners <= 0:
                 raise ValueError
         except ValueError:
-            send_message(chat_id, "❌ Please send a valid positive number.")
+            send_message(chat_id, "❌ Please send a valid positive number.", cancel_kb())
             return
         create_giveaway(data["title"], data["desc"], data["duration_min"], winners)
         clear_admin_state(user_id)
@@ -497,7 +528,7 @@ def handle_callback(callback):
         if not is_admin(user_id):
             return
         set_admin_state(user_id, {"step": "title", "data": {}})
-        edit_message(chat_id, message_id, "📝 Send the <b>giveaway title</b>:")
+        edit_message(chat_id, message_id, "📝 Send the <b>giveaway title</b>:", cancel_kb())
         return
 
     if data == "admin_set_premium":
@@ -505,7 +536,26 @@ def handle_callback(callback):
         if not is_admin(user_id):
             return
         set_admin_state(user_id, {"step": "premium_text", "data": {}})
-        edit_message(chat_id, message_id, "💎 Send the new <b>Premium Account</b> content/text:")
+        edit_message(chat_id, message_id, "💎 Send the new <b>Premium Account</b> content/text:", cancel_kb())
+        return
+
+    if data == "admin_cancel":
+        answer_callback(callback["id"], "❌ Cancelled")
+        if not is_admin(user_id):
+            return
+        clear_admin_state(user_id)
+        edit_message(
+            chat_id, message_id,
+            "🛠️━━━━━━━━━━━━🛠️\n⚙️ <b>Admin Control Panel</b> ⚙️\n🛠️━━━━━━━━━━━━🛠️\n\n<i>Choose an action:</i>",
+            kb(
+                [
+                    [btn("🎯 Add Giveaway", data="admin_add_gw")],
+                    [btn("💎 Set Premium Content", data="admin_set_premium")],
+                    [btn("📊 List Active Giveaways", data="admin_list_gw")],
+                    [btn("🗑️ Delete Giveaway", data="admin_delete_gw")],
+                ]
+            ),
+        )
         return
 
     if data == "admin_list_gw":
@@ -519,7 +569,11 @@ def handle_callback(callback):
             if gw and gw["status"] == "active":
                 remaining = max(0, int(gw["end_time"] - time.time()))
                 lines.append(f"🎁 <b>{gw['title']}</b> — 👥 {len(gw['joiners'])} joined — ⏳ {remaining // 60}m left")
-        edit_message(chat_id, message_id, "📊 <b>Active Giveaways</b>\n\n" + ("\n\n".join(lines) if lines else "😴 No active giveaways right now."))
+        edit_message(
+            chat_id, message_id,
+            "📊 <b>Active Giveaways</b>\n\n" + ("\n\n".join(lines) if lines else "😴 No active giveaways right now."),
+            cancel_kb(),
+        )
         return
 
     if data == "admin_delete_gw":
@@ -533,7 +587,7 @@ def handle_callback(callback):
             if gw and gw["status"] == "active":
                 rows.append([btn(f"🗑️ {gw['title']}", data=f"delconfirm_{gid}")])
         if not rows:
-            edit_message(chat_id, message_id, "😴 No active giveaways to delete.")
+            edit_message(chat_id, message_id, "😴 No active giveaways to delete.", cancel_kb())
             return
         rows.append([btn("🔙 Cancel", data="admin_list_gw")])
         edit_message(chat_id, message_id, "🗑️ <b>Select a giveaway to delete:</b>", kb(rows))
@@ -562,7 +616,7 @@ def handle_callback(callback):
         active_ids = [g for g in active_ids if g != gid]
         set_json("active_ids", active_ids)
         answer_callback(callback["id"], "🗑️ Giveaway deleted.", alert=True)
-        edit_message(chat_id, message_id, "✅ <b>Giveaway deleted successfully.</b>")
+        edit_message(chat_id, message_id, "✅ <b>Giveaway deleted successfully.</b>", cancel_kb())
         return
 
     if data in ("dur_15", "dur_20", "dur_custom"):
@@ -576,14 +630,14 @@ def handle_callback(callback):
         if data == "dur_15":
             gdata["duration_min"] = 15
             set_admin_state(user_id, {"step": "winners", "data": gdata})
-            edit_message(chat_id, message_id, "🏆 How many winners should this giveaway have? Send a number:")
+            edit_message(chat_id, message_id, "🏆 How many winners should this giveaway have? Send a number:", cancel_kb())
         elif data == "dur_20":
             gdata["duration_min"] = 20
             set_admin_state(user_id, {"step": "winners", "data": gdata})
-            edit_message(chat_id, message_id, "🏆 How many winners should this giveaway have? Send a number:")
+            edit_message(chat_id, message_id, "🏆 How many winners should this giveaway have? Send a number:", cancel_kb())
         else:
             set_admin_state(user_id, {"step": "custom_duration", "data": gdata})
-            edit_message(chat_id, message_id, "✏️ Send the custom duration in minutes (e.g. 45):")
+            edit_message(chat_id, message_id, "✏️ Send the custom duration in minutes (e.g. 45):", cancel_kb())
         return
 
 
