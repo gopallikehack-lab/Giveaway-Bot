@@ -19,6 +19,7 @@ from urllib.parse import urlparse, parse_qs
 BOT_TOKEN = os.environ["BOT_TOKEN"]
 API = f"https://api.telegram.org/bot{BOT_TOKEN}"
 ADMIN_IDS = [int(x) for x in os.environ.get("ADMIN_IDS", "").split(",") if x.strip()]
+RESULTS_CHANNEL_ID = int(os.environ["RESULTS_CHANNEL_ID"])  # the results group's numeric chat_id
 CRON_SECRET = os.environ.get("CRON_SECRET", "")
 
 UPSTASH_URL = os.environ["UPSTASH_REDIS_REST_URL"]
@@ -93,47 +94,69 @@ def end_giveaway(gid, gw):
 
     if winners:
         winner_lines = "\n\n".join(
-            f"🏆 <b>{w['name']}</b>\n"
-            f"   • Username: {'@' + w['username'] if w['username'] else '<i>no username set</i>'}\n"
-            f"   • Chat ID: <code>{w['id']}</code>"
+            f"▸ <b>{w['name']}</b>\n"
+            f"    Username: {'@' + w['username'] if w['username'] else '<i>not set</i>'}\n"
+            f"    Chat ID: <code>{w['id']}</code>"
             for w in winners
         )
     else:
-        winner_lines = "No one joined this giveaway. 😔"
+        winner_lines = "No one joined this giveaway."
 
     result_text = (
-        f"🎊━━━━━━━━━━━━🎊\n"
-        f"🏁 <b>Giveaway Ended!</b>\n"
-        f"🎯 {gw['title']}\n"
-        f"🎊━━━━━━━━━━━━🎊\n\n"
-        f"👥 Total Participants: <b>{len(joiners)}</b>\n\n"
-        f"🏆 <b>Winners:</b>\n{winner_lines}\n\n"
-        f"<blockquote>🔒 Selected via secure random draw inside the bot — 100% fair, zero cheating possible.</blockquote>\n\n"
-        f"🎉 Congratulations to all winners! 🎉"
+        f"◆ ──────────────── ◆\n"
+        f"🏁 <b>GIVEAWAY RESULT</b>\n"
+        f"◆ ──────────────── ◆\n\n"
+        f"🎯 <b>{gw['title']}</b>\n"
+        f"👥 Participants: <b>{len(joiners)}</b>\n\n"
+        f"<b>WINNERS</b>\n"
+        f"──────────────────\n"
+        f"{winner_lines}\n"
+        f"──────────────────\n\n"
+        f"🔒 <i>Selected via secure random draw inside the bot. Verified fair, zero manipulation.</i>"
     )
 
-    # Result stays inside the bot — sent to admins in their bot chat, NOT posted to any channel.
+    # Post full result (name + username + chat id) to the results group
+    try:
+        group_res = send_message(RESULTS_CHANNEL_ID, result_text)
+        group_failed = not group_res.get("ok")
+    except Exception as e:
+        print(f"Group post crashed: {e}")
+        group_res, group_failed = {"ok": False, "error": str(e)}, True
+
+    # DM each winner individually
     delivery_failures = []
     for w in winners:
-        res = send_message(
-            w["id"],
-            f"🎊━━━━━━━━━━━━🎊\n<b>Congratulations!</b> 🎊\n\n"
-            f"You won the giveaway 🎁 <b>{gw['title']}</b>!\n\n"
-            f"<blockquote>🔒 Picked by secure random draw — fair &amp; verified.</blockquote>\n\n"
-            f"📩 Contact @GpsirEra to claim your prize.",
-        )
-        if not res.get("ok"):
+        try:
+            res = send_message(
+                w["id"],
+                f"◆ ──────────────── ◆\n"
+                f"🏆 <b>YOU WON!</b>\n"
+                f"◆ ──────────────── ◆\n\n"
+                f"Giveaway: <b>{gw['title']}</b>\n\n"
+                f"🔒 <i>Picked via secure random draw — verified fair.</i>\n\n"
+                f"📩 Contact <b>@GpsirEra</b> to claim your prize.",
+            )
+            if not res.get("ok"):
+                delivery_failures.append(w)
+        except Exception as e:
+            print(f"Winner DM crashed for {w['id']}: {e}")
             delivery_failures.append(w)
 
+    # Always notify admins in bot chat too, as a reliable backup — and surface any failures loudly.
+    admin_note = result_text
+    if group_failed:
+        admin_note += f"\n\n⚠️ <b>Could not post to the results group</b> ({RESULTS_CHANNEL_ID}). Response: {group_res}"
     if delivery_failures:
         fail_lines = "\n".join(f"• {w['name']} (id: {w['id']})" for w in delivery_failures)
-        result_text += (
+        admin_note += (
             f"\n\n⚠️ <b>Could not DM these winners</b> (they may have blocked the bot, "
             f"or never pressed Start before joining):\n{fail_lines}"
         )
-
     for admin_id in ADMIN_IDS:
-        send_message(admin_id, result_text)
+        try:
+            send_message(admin_id, admin_note)
+        except Exception as e:
+            print(f"Admin notify crashed for {admin_id}: {e}")
 
 
 class handler(BaseHTTPRequestHandler):
