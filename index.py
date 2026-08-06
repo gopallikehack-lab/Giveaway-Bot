@@ -20,7 +20,7 @@ BOT_TOKEN = os.environ["BOT_TOKEN"]
 API = f"https://api.telegram.org/bot{BOT_TOKEN}"
 
 ADMIN_IDS = [int(x) for x in os.environ.get("ADMIN_IDS", "").split(",") if x.strip()]
-RESULTS_CHANNEL_ID = int(os.environ["RESULTS_CHANNEL_ID"])  # numeric chat_id of the results group
+RESULTS_CHANNEL_ID = os.environ.get("RESULTS_CHANNEL_ID")  # currently unused, kept optional
 
 CHANNEL1_ID = int(os.environ["CHANNEL1_ID"])
 CHANNEL2_ID = int(os.environ["CHANNEL2_ID"])
@@ -241,84 +241,50 @@ def giveaway_detail_text(gw):
         f"▸ Winners: <b>{gw['winners_count']}</b>\n"
         f"▸ Participants: <b>{len(gw['joiners'])}</b>\n"
         f"▸ Time Left: <b>{mins}m {secs}s</b>\n\n"
-        f"🔒 <i>Verified fair — true random draw, zero manipulation.</i>\n\n"
-        f"📢 Results are posted here in this bot chat, and in our "
-        f"<a href=\"{RESULTS_GROUP_LINK}\">official results group</a>."
+        f"🔒 <i>Verified fair — winner picked live by the admin via random serial draw.</i>"
     )
 
 
-def end_giveaway(gid, gw):
-    gw["status"] = "ended"
+def draw_roulette_winners(gid, gw):
+    """Admin tapped 🎰 Lucky Serial Roulette — actually pick the winner(s) now."""
     joiners = gw["joiners"]
     n_winners = min(gw["winners_count"], len(joiners))
-    winners = random.sample(joiners, n_winners) if n_winners > 0 else []
+    if n_winners > 0:
+        winner_indices = random.sample(range(len(joiners)), n_winners)
+    else:
+        winner_indices = []
+    winners = [joiners[i] for i in winner_indices]
+    gw["status"] = "completed"
     gw["winners"] = winners
     set_json(f"giveaway:{gid}", gw)
 
+    awaiting_ids = get_json("awaiting_draw_ids", [])
+    awaiting_ids = [g for g in awaiting_ids if g != gid]
+    set_json("awaiting_draw_ids", awaiting_ids)
+
     if winners:
-        winner_lines_full = "\n\n".join(
-            f"▸ <b>{w['name']}</b>\n"
+        winner_lines = "\n\n".join(
+            f"🏆 <b>Serial #{winner_indices[k] + 1} — {w['name']}</b>\n"
             f"    Username: {'@' + w['username'] if w['username'] else '<i>not set</i>'}\n"
             f"    Chat ID: <code>{w['id']}</code>"
-            for w in winners
-        )
-        winner_lines_public = "\n".join(
-            f"🏆 <b>{w['name']}</b>" + (f" (@{w['username']})" if w["username"] else "")
-            for w in winners
+            for k, w in enumerate(winners)
         )
     else:
-        winner_lines_full = "No one joined this giveaway."
-        winner_lines_public = "No one joined this giveaway."
+        winner_lines = "No one joined this giveaway."
 
-    if joiners:
-        participant_lines = "\n".join(
-            f"{i + 1}. {j['name']} — @{j['username'] if j['username'] else 'no_username'} — ID: {j['id']}"
-            for i, j in enumerate(joiners)
-        )
-    else:
-        participant_lines = "No one joined."
-
-    result_text = (
+    return (
         f"◆ ──────────────── ◆\n"
-        f"🏁 <b>GIVEAWAY RESULT</b>\n"
+        f"🎰 <b>LUCKY SERIAL ROULETTE</b> 🎰\n"
         f"◆ ──────────────── ◆\n\n"
         f"🎯 <b>{gw['title']}</b>\n"
         f"👥 Participants: <b>{len(joiners)}</b>\n\n"
-        f"<b>WINNERS</b>\n"
+        f"🌀 <i>Spinning the wheel…</i>\n\n"
+        f"<b>WINNER{'S' if len(winners) != 1 else ''}</b>\n"
         f"──────────────────\n"
-        f"{winner_lines_full}\n"
+        f"{winner_lines}\n"
         f"──────────────────\n\n"
-        f"🔒 <i>Selected via secure random draw inside the bot. Verified fair, zero manipulation.</i>"
+        f"🤞🥀"
     )
-
-    admin_text = (
-        result_text
-        + f"\n\n<b>ALL PARTICIPANTS ({len(joiners)})</b>\n"
-        + f"──────────────────\n{participant_lines}"
-    )
-
-    broadcast_text = (
-        f"◆ ──────────────── ◆\n"
-        f"🏁 <b>GIVEAWAY ENDED</b>\n"
-        f"◆ ──────────────── ◆\n\n"
-        f"🎯 <b>{gw['title']}</b>\n\n"
-        f"<b>Winner(s):</b>\n{winner_lines_public}\n\n"
-        f"🔒 <i>Picked via secure random draw — verified fair.</i>\n\n"
-        f"Didn't win this time? More giveaways coming — stay tuned! 🎉"
-    )
-
-    group_res = send_message(RESULTS_CHANNEL_ID, result_text)
-    group_failed = not group_res.get("ok")
-
-    admin_text_final = admin_text
-    if group_failed:
-        admin_text_final += f"\n\n⚠️ <b>Could not post to the results group</b> ({RESULTS_CHANNEL_ID}). Response: {group_res}"
-    for admin_id in ADMIN_IDS:
-        send_message(admin_id, admin_text_final)
-
-    all_users = get_json("all_users", [])
-    for uid in all_users:
-        send_message(uid, broadcast_text)
 
 
 # ============================== ROUTES: /start, /admin, /myid ==================
@@ -606,11 +572,19 @@ def handle_callback(callback):
             if gw and gw["status"] == "active":
                 remaining = max(0, int(gw["end_time"] - time.time()))
                 lines.append(f"🎁 <b>{gw['title']}</b> — 👥 {len(gw['joiners'])} joined — ⏳ {remaining // 60}m left")
-        edit_message(
-            chat_id, message_id,
-            "📊 <b>Active Giveaways</b>\n\n" + ("\n\n".join(lines) if lines else "😴 No active giveaways right now."),
-            cancel_kb(),
-        )
+
+        awaiting_ids = get_json("awaiting_draw_ids", [])
+        rows = []
+        for gid in awaiting_ids:
+            gw = get_json(f"giveaway:{gid}")
+            if gw and gw["status"] == "awaiting_draw":
+                rows.append([btn(f"🎰 Draw: {gw['title']}", data=f"roulette_{gid}")])
+
+        text = "📊 <b>Active Giveaways</b>\n\n" + ("\n\n".join(lines) if lines else "😴 No active giveaways right now.")
+        if rows:
+            text += "\n\n⏰ <b>Awaiting Draw</b>\n(tap a button below to run the roulette)"
+        rows.append([btn("🔙 Cancel", data="admin_cancel")])
+        edit_message(chat_id, message_id, text, kb(rows))
         return
 
     if data == "admin_delete_gw":
@@ -654,6 +628,26 @@ def handle_callback(callback):
         set_json("active_ids", active_ids)
         answer_callback(callback["id"], "🗑️ Giveaway deleted.", alert=True)
         edit_message(chat_id, message_id, "✅ <b>Giveaway deleted successfully.</b>", cancel_kb())
+        return
+
+    if data.startswith("roulette_"):
+        gid = data.split("_", 1)[1]
+        if not is_admin(user_id):
+            answer_callback(callback["id"])
+            return
+        answer_callback(callback["id"], "🎰 Spinning…")
+        gw = get_json(f"giveaway:{gid}")
+        if not gw:
+            edit_message(chat_id, message_id, "⚠️ This giveaway no longer exists.")
+            return
+        if gw["status"] == "completed":
+            edit_message(chat_id, message_id, "⚠️ This giveaway's winner has already been drawn.")
+            return
+        if gw["status"] != "awaiting_draw":
+            edit_message(chat_id, message_id, "⚠️ This giveaway isn't ready for a draw yet.")
+            return
+        reveal_text = draw_roulette_winners(gid, gw)
+        edit_message(chat_id, message_id, reveal_text)
         return
 
     if data in ("dur_15", "dur_20", "dur_custom"):
