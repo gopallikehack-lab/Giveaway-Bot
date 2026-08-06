@@ -220,6 +220,16 @@ def clear_admin_state(user_id):
     delete_key(f"admin_state:{user_id}")
 
 
+def track_user(user_id):
+    users = get_json("all_users", [])
+    if user_id not in users:
+        users.append(user_id)
+        set_json("all_users", users)
+
+
+RESULTS_GROUP_LINK = "https://t.me/+XdEsAIp53pZjNzQ1"
+
+
 def giveaway_detail_text(gw):
     remaining = max(0, int(gw["end_time"] - time.time()))
     mins, secs = divmod(remaining, 60)
@@ -231,7 +241,9 @@ def giveaway_detail_text(gw):
         f"▸ Winners: <b>{gw['winners_count']}</b>\n"
         f"▸ Participants: <b>{len(gw['joiners'])}</b>\n"
         f"▸ Time Left: <b>{mins}m {secs}s</b>\n\n"
-        f"🔒 <i>Verified fair — true random draw, zero manipulation.</i>"
+        f"🔒 <i>Verified fair — true random draw, zero manipulation.</i>\n\n"
+        f"📢 Results are posted here in this bot chat, and in our "
+        f"<a href=\"{RESULTS_GROUP_LINK}\">official results group</a>."
     )
 
 
@@ -244,14 +256,27 @@ def end_giveaway(gid, gw):
     set_json(f"giveaway:{gid}", gw)
 
     if winners:
-        winner_lines = "\n\n".join(
+        winner_lines_full = "\n\n".join(
             f"▸ <b>{w['name']}</b>\n"
             f"    Username: {'@' + w['username'] if w['username'] else '<i>not set</i>'}\n"
             f"    Chat ID: <code>{w['id']}</code>"
             for w in winners
         )
+        winner_lines_public = "\n".join(
+            f"🏆 <b>{w['name']}</b>" + (f" (@{w['username']})" if w["username"] else "")
+            for w in winners
+        )
     else:
-        winner_lines = "No one joined this giveaway."
+        winner_lines_full = "No one joined this giveaway."
+        winner_lines_public = "No one joined this giveaway."
+
+    if joiners:
+        participant_lines = "\n".join(
+            f"{i + 1}. {j['name']} — @{j['username'] if j['username'] else 'no_username'} — ID: {j['id']}"
+            for i, j in enumerate(joiners)
+        )
+    else:
+        participant_lines = "No one joined."
 
     result_text = (
         f"◆ ──────────────── ◆\n"
@@ -261,39 +286,39 @@ def end_giveaway(gid, gw):
         f"👥 Participants: <b>{len(joiners)}</b>\n\n"
         f"<b>WINNERS</b>\n"
         f"──────────────────\n"
-        f"{winner_lines}\n"
+        f"{winner_lines_full}\n"
         f"──────────────────\n\n"
         f"🔒 <i>Selected via secure random draw inside the bot. Verified fair, zero manipulation.</i>"
+    )
+
+    admin_text = (
+        result_text
+        + f"\n\n<b>ALL PARTICIPANTS ({len(joiners)})</b>\n"
+        + f"──────────────────\n{participant_lines}"
+    )
+
+    broadcast_text = (
+        f"◆ ──────────────── ◆\n"
+        f"🏁 <b>GIVEAWAY ENDED</b>\n"
+        f"◆ ──────────────── ◆\n\n"
+        f"🎯 <b>{gw['title']}</b>\n\n"
+        f"<b>Winner(s):</b>\n{winner_lines_public}\n\n"
+        f"🔒 <i>Picked via secure random draw — verified fair.</i>\n\n"
+        f"Didn't win this time? More giveaways coming — stay tuned! 🎉"
     )
 
     group_res = send_message(RESULTS_CHANNEL_ID, result_text)
     group_failed = not group_res.get("ok")
 
-    delivery_failures = []
-    for w in winners:
-        res = send_message(
-            w["id"],
-            f"◆ ──────────────── ◆\n"
-            f"🏆 <b>YOU WON!</b>\n"
-            f"◆ ──────────────── ◆\n\n"
-            f"Giveaway: <b>{gw['title']}</b>\n\n"
-            f"🔒 <i>Picked via secure random draw — verified fair.</i>\n\n"
-            f"📩 Contact <b>@GpsirEra</b> to claim your prize.",
-        )
-        if not res.get("ok"):
-            delivery_failures.append(w)
-
-    admin_note = result_text
+    admin_text_final = admin_text
     if group_failed:
-        admin_note += f"\n\n⚠️ <b>Could not post to the results group</b> ({RESULTS_CHANNEL_ID}). Response: {group_res}"
-    if delivery_failures:
-        fail_lines = "\n".join(f"• {w['name']} (id: {w['id']})" for w in delivery_failures)
-        admin_note += (
-            f"\n\n⚠️ <b>Could not DM these winners</b> (they may have blocked the bot, "
-            f"or never pressed Start before joining):\n{fail_lines}"
-        )
+        admin_text_final += f"\n\n⚠️ <b>Could not post to the results group</b> ({RESULTS_CHANNEL_ID}). Response: {group_res}"
     for admin_id in ADMIN_IDS:
-        send_message(admin_id, admin_note)
+        send_message(admin_id, admin_text_final)
+
+    all_users = get_json("all_users", [])
+    for uid in all_users:
+        send_message(uid, broadcast_text)
 
 
 # ============================== ROUTES: /start, /admin, /myid ==================
@@ -312,6 +337,7 @@ WELCOME_CAPTION = (
 
 
 def handle_start(chat_id, user_id):
+    track_user(user_id)
     send_photo(chat_id, WELCOME_PHOTO_URL, WELCOME_CAPTION)
     not_joined = check_membership(user_id)
     if not_joined:
@@ -527,6 +553,7 @@ def handle_callback(callback):
             return
         gw["joiners"].append({"id": user_id, "name": user.get("first_name", "User"), "username": user.get("username", "")})
         set_json(f"giveaway:{gid}", gw)
+        track_user(user_id)
         answer_callback(callback["id"], "✅ You joined this giveaway! Good luck 🍀", alert=True)
         rows = [[btn("✅ Joined", data=f"join_{gid}")], [btn("🔙 Back", data="menu_active")]]
         edit_message(chat_id, message_id, giveaway_detail_text(gw), kb(rows))
