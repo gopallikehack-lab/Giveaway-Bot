@@ -41,6 +41,8 @@ OWNER_INFO_TEXT = (
     "📩 Need help? Contact me 👉 <b>@GpsirEra</b> ✨"
 )
 
+WELCOME_PHOTO_URL = "https://i.ibb.co/8DS5NgNw/file-00000000b4c4820883d3048f8bede975.png"
+
 UPSTASH_URL = os.environ["UPSTASH_REDIS_REST_URL"]
 UPSTASH_TOKEN = os.environ["UPSTASH_REDIS_REST_TOKEN"]
 
@@ -92,6 +94,13 @@ def send_message(chat_id, text, keyboard=None):
     if keyboard:
         payload["reply_markup"] = keyboard
     return tg_call("sendMessage", payload)
+
+
+def send_photo(chat_id, photo_url, caption=None):
+    payload = {"chat_id": chat_id, "photo": photo_url, "parse_mode": "HTML"}
+    if caption:
+        payload["caption"] = caption
+    return tg_call("sendPhoto", payload)
 
 
 def edit_message(chat_id, message_id, text, keyboard=None):
@@ -215,8 +224,10 @@ def end_giveaway(gid, gw):
     set_json(f"giveaway:{gid}", gw)
 
     if winners:
-        winner_lines = "\n".join(
-            f"🏆 {w['name']} (@{w['username']})" if w["username"] else f"🏆 {w['name']} (id: {w['id']})"
+        winner_lines = "\n\n".join(
+            f"🏆 <b>{w['name']}</b>\n"
+            f"   • Username: {'@' + w['username'] if w['username'] else '<i>no username set</i>'}\n"
+            f"   • Chat ID: <code>{w['id']}</code>"
             for w in winners
         )
     else:
@@ -249,7 +260,20 @@ def end_giveaway(gid, gw):
 
 # ============================== ROUTES: /start, /admin, /myid ==================
 
+WELCOME_CAPTION = (
+    "🌟━━━━━━━━━━━━━🌟\n"
+    "👑 <b>GpsirEra Premium Bot</b> 👑\n"
+    "🌟━━━━━━━━━━━━━🌟\n\n"
+    "Your all-in-one hub for:\n"
+    "🎉 <b>Fair &amp; secure Giveaways</b>\n"
+    "💎 <b>Premium Accounts</b>\n\n"
+    "<blockquote>🔒 Every draw is 100% random — verified fair, no cheating possible.</blockquote>\n\n"
+    "Built &amp; maintained by <b>@GpsirEra</b> ✨"
+)
+
+
 def handle_start(chat_id, user_id):
+    send_photo(chat_id, WELCOME_PHOTO_URL, WELCOME_CAPTION)
     not_joined = check_membership(user_id)
     if not_joined:
         send_message(chat_id, FORCE_JOIN_TEXT, force_join_keyboard(not_joined))
