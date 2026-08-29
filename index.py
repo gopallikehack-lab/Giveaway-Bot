@@ -32,7 +32,7 @@ CHANNEL1_ID = int(os.environ["CHANNEL1_ID"])
 CHANNEL2_ID = int(os.environ["CHANNEL2_ID"])
 CHANNEL3_ID = int(os.environ["CHANNEL3_ID"])
 FORCE_JOIN_CHANNELS = [
-    {"name": "Gpsir Giveaway Channel", "chat_id": CHANNEL3_ID, "link": "https://t.me/+0w8ATlAukVA1MWU1"},
+    {"name": "Gpsir Giveaway Channel", "chat_id": CHANNEL3_ID, "link": "https://t.me/+0w8ATlAukVA1MWU1", "request_based": True},
     {"name": "Gpsir ha4k Channel", "chat_id": CHANNEL1_ID, "link": "https://t.me/+74PC9DgmtN84NzFl"},
     {"name": "Gpsir Chat Group", "chat_id": CHANNEL2_ID, "link": "https://t.me/+VXs73pFfyEphMzJl"},
 ]
@@ -190,6 +190,20 @@ def is_banned(user_id):
 def check_membership(user_id):
     not_joined = []
     for ch in FORCE_JOIN_CHANNELS:
+        if ch.get("request_based"):
+            # Request-to-join channel: sending the request is enough to pass —
+            # we don't wait for the admin to approve it.
+            requested = get_json(f"join_requests:{ch['chat_id']}", [])
+            if user_id in requested:
+                continue
+            # Fallback: they might already be a full (approved) member.
+            res = get_chat_member(ch["chat_id"], user_id)
+            status = res.get("result", {}).get("status") if res.get("ok") else None
+            if status in ("member", "administrator", "creator"):
+                continue
+            not_joined.append(ch)
+            continue
+
         res = get_chat_member(ch["chat_id"], user_id)
         status = res.get("result", {}).get("status") if res.get("ok") else None
         if status not in ("member", "administrator", "creator"):
@@ -773,6 +787,15 @@ class handler(BaseHTTPRequestHandler):
                     answer_callback(cb["id"], "🚫 You have been banned from using this bot.", alert=True)
                 else:
                     handle_callback(cb)
+            elif "chat_join_request" in update:
+                jr = update["chat_join_request"]
+                jr_chat_id = jr["chat"]["id"]
+                jr_user_id = jr["from"]["id"]
+                key = f"join_requests:{jr_chat_id}"
+                requested = get_json(key, [])
+                if jr_user_id not in requested:
+                    requested.append(jr_user_id)
+                    set_json(key, requested)
         except Exception as e:
             print(f"Webhook error: {e}")
 
