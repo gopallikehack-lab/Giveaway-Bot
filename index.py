@@ -30,12 +30,14 @@ ADMIN_IDS = [int(x) for x in os.environ.get("ADMIN_IDS", "").split(",") if x.str
 
 CHANNEL1_ID = int(os.environ["CHANNEL1_ID"])
 CHANNEL2_ID = int(os.environ["CHANNEL2_ID"])
+CHANNEL3_ID = int(os.environ["CHANNEL3_ID"])
 FORCE_JOIN_CHANNELS = [
+    {"name": "Gpsir Giveaway Channel", "chat_id": CHANNEL3_ID, "link": "https://t.me/+0w8ATlAukVA1MWU1"},
     {"name": "Gpsir ha4k Channel", "chat_id": CHANNEL1_ID, "link": "https://t.me/+74PC9DgmtN84NzFl"},
     {"name": "Gpsir Chat Group", "chat_id": CHANNEL2_ID, "link": "https://t.me/+VXs73pFfyEphMzJl"},
 ]
 
-WELCOME_PHOTO_URL = "https://i.ibb.co/8DS5NgNw/file-00000000b4c4820883d3048f8bede975.png"
+WELCOME_PHOTO_URL = "https://i.ibb.co/WpcdVFP0/file-0000000079dc81f5b57e72408da59449.png"
 
 UPSTASH_URL = os.environ["UPSTASH_REDIS_REST_URL"]
 UPSTASH_TOKEN = os.environ["UPSTASH_REDIS_REST_TOKEN"]
@@ -47,6 +49,17 @@ def header(title):
 
 
 DIV = "▬▬▬▬▬▬▬▬▬▬▬▬▬▬"
+
+# Premium animated/custom emoji (Telegram Premium sticker-set emoji, rendered via
+# <tg-emoji> — visible to ALL users, sending doesn't require the bot to have
+# Premium). Note: Telegram does NOT support custom emoji inside inline button
+# labels (Bot API only allows plain text there) — these are for message text only.
+EMOJI_MONEY = '<tg-emoji emoji-id="4965219701572503640">💰</tg-emoji>'
+EMOJI_GIFT = '<tg-emoji emoji-id="5280615440928758599">🎁</tg-emoji>'
+EMOJI_FLOWER = '<tg-emoji emoji-id="5208726561796146418">💐</tg-emoji>'
+EMOJI_RIBBON = '<tg-emoji emoji-id="5190725129792929407">🎀</tg-emoji>'
+EMOJI_GIFT2 = '<tg-emoji emoji-id="5449577822265840863">🎁</tg-emoji>'
+EMOJI_GIFT3 = '<tg-emoji emoji-id="6093780439439249308">🎁</tg-emoji>'
 
 # ============================== STORAGE (Upstash Redis REST) ==================
 
@@ -155,6 +168,23 @@ def is_admin(user_id):
     return user_id in ADMIN_IDS
 
 
+def track_user(user):
+    """Remember every user who has ever interacted with the bot, and map their
+    username -> id so admin can ban/unban by username later."""
+    uid = user["id"]
+    users = get_json("all_users", [])
+    if uid not in users:
+        users.append(uid)
+        set_json("all_users", users)
+    username = user.get("username")
+    if username:
+        set_json(f"username_map:{username.lower()}", uid)
+
+
+def is_banned(user_id):
+    return user_id in get_json("banned_users", [])
+
+
 # ============================== FORCE JOIN ==================
 
 def check_membership(user_id):
@@ -188,8 +218,8 @@ WELCOME_TEXT = (
 WELCOME_CAPTION = (
     f"{header('GPSIRERA')}\n\n"
     "✦ Premium Giveaway &amp; Rewards Bot ✦\n\n"
-    "🎁 Fair, verified giveaways\n"
-    "💎 Premium account access\n"
+    f"{EMOJI_GIFT} Fair, verified giveaways\n"
+    f"{EMOJI_MONEY} Premium account access\n"
     "🔒 Every winner picked by true random draw\n\n"
     f"{DIV}\n"
     "Maintained by <b>@GpsirEra</b>"
@@ -238,7 +268,7 @@ def giveaway_detail_text(gw):
     return (
         f"{header(gw['title'])}\n\n"
         f"{gw['desc']}\n\n"
-        f"▸ Winners: <b>{gw['winners_count']}</b>\n"
+        f"{EMOJI_RIBBON} Winners: <b>{gw['winners_count']}</b>\n"
         f"▸ Participants: <b>{len(gw['joiners'])}</b>\n"
         f"▸ Time Left: <b>{mins}m {secs}s</b>\n\n"
         f"🔒 <i>Winner picked live by the admin via random draw — never public.</i>"
@@ -266,7 +296,7 @@ def manage_detail_text(gw):
     )
     if gw["status"] == "completed" and gw.get("winners"):
         winner_lines = "\n".join(
-            f"🏆 {w['name']} (@{w['username'] if w['username'] else 'no_username'}) — ID: {w['id']}"
+            f"{EMOJI_GIFT2} {w['name']} (@{w['username'] if w['username'] else 'no_username'}) — ID: {w['id']}"
             for w in gw["winners"]
         )
         text += f"\n\n<b>WINNER(S)</b>\n{DIV}\n{winner_lines}"
@@ -302,7 +332,7 @@ def draw_winner(gid, gw):
 
     if winners:
         winner_lines = "\n\n".join(
-            f"🏆 <b>{w['name']}</b>\n"
+            f"{EMOJI_GIFT3} <b>{w['name']}</b>\n"
             f"    Username: {'@' + w['username'] if w['username'] else '<i>not set</i>'}\n"
             f"    Chat ID: <code>{w['id']}</code>"
             for w in winners
@@ -318,7 +348,7 @@ def draw_winner(gid, gw):
         f"<b>WINNER{'S' if len(winners) != 1 else ''}</b>\n{DIV}\n"
         f"{winner_lines}\n{DIV}\n\n"
         f"🔒 <i>Visible only to you — nothing was posted publicly.</i>\n\n"
-        f"🤞🥀"
+        f"{EMOJI_FLOWER} 🤞🥀"
     )
 
 
@@ -339,6 +369,8 @@ def admin_menu_keyboard():
             [btn("🎯 Add Giveaway", data="admin_add_gw")],
             [btn("💎 Set Premium Content", data="admin_set_premium")],
             [btn("📋 Manage Giveaways", data="admin_manage")],
+            [btn("🚫 Ban / Unban User", data="admin_ban")],
+            [btn("📢 Broadcast Message", data="admin_broadcast")],
         ]
     )
 
@@ -456,6 +488,44 @@ def handle_text_message(chat_id, user_id, text):
         clear_admin_state(user_id)
         send_message(chat_id, "✅ Premium Account content updated.")
 
+    elif step == "ban_target":
+        target = text.strip().lstrip("@")
+        if target.isdigit():
+            target_uid = int(target)
+        else:
+            target_uid = get_json(f"username_map:{target.lower()}")
+        clear_admin_state(user_id)
+        if target_uid is None:
+            send_message(
+                chat_id,
+                "❌ User not found. They must have used the bot at least once with that "
+                "username, or send their numeric ID instead (use /myid to test with your own).",
+            )
+            return
+        banned = get_json("banned_users", [])
+        if target_uid in banned:
+            banned.remove(target_uid)
+            send_message(chat_id, f"✅ User <code>{target_uid}</code> has been <b>unbanned</b>.")
+        else:
+            banned.append(target_uid)
+            send_message(chat_id, f"🚫 User <code>{target_uid}</code> has been <b>banned</b>.")
+        set_json("banned_users", banned)
+
+    elif step == "broadcast_text":
+        clear_admin_state(user_id)
+        all_users = get_json("all_users", [])
+        banned = set(get_json("banned_users", []))
+        sent, failed = 0, 0
+        for uid in all_users:
+            if uid in banned:
+                continue
+            res = send_message(uid, text)
+            if res.get("ok"):
+                sent += 1
+            else:
+                failed += 1
+        send_message(chat_id, f"📢 <b>Broadcast complete.</b>\n\n✅ Delivered: {sent}\n❌ Failed: {failed}")
+
 
 # ============================== CALLBACK QUERY HANDLING ==================
 
@@ -557,6 +627,27 @@ def handle_callback(callback):
             return
         set_admin_state(user_id, {"step": "premium_text", "data": {}})
         edit_message(chat_id, message_id, "💎 Send the new <b>Premium Account</b> content/text:", cancel_kb())
+        return
+
+    if data == "admin_ban":
+        answer_callback(callback["id"])
+        if not is_admin(user_id):
+            return
+        set_admin_state(user_id, {"step": "ban_target", "data": {}})
+        edit_message(
+            chat_id, message_id,
+            "🚫 Send the <b>username</b> (with or without @) or <b>numeric user ID</b> to ban/unban.\n\n"
+            "<i>Note: if it's already banned, this will unban them instead.</i>",
+            cancel_kb(),
+        )
+        return
+
+    if data == "admin_broadcast":
+        answer_callback(callback["id"])
+        if not is_admin(user_id):
+            return
+        set_admin_state(user_id, {"step": "broadcast_text", "data": {}})
+        edit_message(chat_id, message_id, "📢 Send the message you want to broadcast to every bot user:", cancel_kb())
         return
 
     if data == "admin_cancel":
@@ -668,9 +759,20 @@ class handler(BaseHTTPRequestHandler):
             update = json.loads(body)
             if "message" in update and "text" in update["message"]:
                 msg = update["message"]
-                handle_text_message(msg["chat"]["id"], msg["from"]["id"], msg["text"])
+                uid = msg["from"]["id"]
+                track_user(msg["from"])
+                if is_banned(uid) and not is_admin(uid):
+                    send_message(msg["chat"]["id"], "🚫 You have been banned from using this bot.")
+                else:
+                    handle_text_message(msg["chat"]["id"], uid, msg["text"])
             elif "callback_query" in update:
-                handle_callback(update["callback_query"])
+                cb = update["callback_query"]
+                uid = cb["from"]["id"]
+                track_user(cb["from"])
+                if is_banned(uid) and not is_admin(uid):
+                    answer_callback(cb["id"], "🚫 You have been banned from using this bot.", alert=True)
+                else:
+                    handle_callback(cb)
         except Exception as e:
             print(f"Webhook error: {e}")
 
