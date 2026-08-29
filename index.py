@@ -776,7 +776,7 @@ class handler(BaseHTTPRequestHandler):
                 uid = msg["from"]["id"]
                 track_user(msg["from"])
                 if is_banned(uid) and not is_admin(uid):
-                    send_message(msg["chat"]["id"], "🚫 You have been banned from using this bot.")
+                    send_message(msg["chat"]["id"], "🚫 You have been banned from using this bot Contact Owner To Join @GpsirEra .")
                 else:
                     handle_text_message(msg["chat"]["id"], uid, msg["text"])
             elif "callback_query" in update:
@@ -784,7 +784,7 @@ class handler(BaseHTTPRequestHandler):
                 uid = cb["from"]["id"]
                 track_user(cb["from"])
                 if is_banned(uid) and not is_admin(uid):
-                    answer_callback(cb["id"], "🚫 You have been banned from using this bot.", alert=True)
+                    answer_callback(cb["id"], "🚫 You have been banned from using this bot Contact Owner To Join @GpsirEra .", alert=True)
                 else:
                     handle_callback(cb)
             elif "chat_join_request" in update:
