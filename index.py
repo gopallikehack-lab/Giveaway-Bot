@@ -540,6 +540,33 @@ def handle_text_message(chat_id, user_id, text):
                 failed += 1
         send_message(chat_id, f"📢 <b>Broadcast complete.</b>\n\n✅ Delivered: {sent}\n❌ Failed: {failed}")
 
+    elif step == "remove_participant":
+        gid = data.get("gid")
+        gw = get_json(f"giveaway:{gid}") if gid else None
+        if not gw:
+            clear_admin_state(user_id)
+            send_message(chat_id, "⚠️ This giveaway no longer exists.")
+            return
+        try:
+            serial = int(text.strip())
+            if serial < 1 or serial > len(gw["joiners"]):
+                raise ValueError
+        except ValueError:
+            send_message(
+                chat_id,
+                f"❌ Please send a valid serial number between 1 and {len(gw['joiners'])}.",
+                cancel_kb(),
+            )
+            return
+        removed = gw["joiners"].pop(serial - 1)
+        set_json(f"giveaway:{gid}", gw)
+        clear_admin_state(user_id)
+        send_message(
+            chat_id,
+            f"✅ Removed <b>{removed['name']}</b> (@{removed['username'] if removed['username'] else 'no_username'}) "
+            f"from <b>{gw['title']}</b>.\n\n👥 Participants left: <b>{len(gw['joiners'])}</b>",
+        )
+
 
 # ============================== CALLBACK QUERY HANDLING ==================
 
@@ -693,11 +720,32 @@ def handle_callback(callback):
             edit_message(chat_id, message_id, "⚠️ This giveaway no longer exists.", cancel_kb())
             return
         rows = []
-        if gw["status"] == "active":
-            rows.append([btn("🎰 Draw Winner Now", data=f"draw_{gid}")])
+        draw_label = "🎰 Redraw Winner" if gw["status"] == "completed" else "🎰 Draw Winner Now"
+        rows.append([btn(draw_label, data=f"draw_{gid}")])
+        if gw["joiners"]:
+            rows.append([btn("❌ Remove Participant", data=f"rmpart_{gid}")])
         rows.append([btn("🗑️ Delete", data=f"delconfirm_{gid}")])
         rows.append([btn("🔙 Back", data="admin_manage")])
         edit_message(chat_id, message_id, manage_detail_text(gw), kb(rows))
+        return
+
+    if data.startswith("rmpart_"):
+        gid = data.split("_", 1)[1]
+        if not is_admin(user_id):
+            answer_callback(callback["id"])
+            return
+        answer_callback(callback["id"])
+        gw = get_json(f"giveaway:{gid}")
+        if not gw or not gw["joiners"]:
+            edit_message(chat_id, message_id, "😴 No participants to remove.", cancel_kb())
+            return
+        set_admin_state(user_id, {"step": "remove_participant", "data": {"gid": gid}})
+        edit_message(
+            chat_id, message_id,
+            f"{manage_detail_text(gw)}\n\n"
+            f"❌ Send the <b>serial number</b> (from the list above) of the participant to remove:",
+            cancel_kb(),
+        )
         return
 
     if data.startswith("draw_"):
@@ -709,9 +757,6 @@ def handle_callback(callback):
         gw = get_json(f"giveaway:{gid}")
         if not gw:
             edit_message(chat_id, message_id, "⚠️ This giveaway no longer exists.", cancel_kb())
-            return
-        if gw["status"] != "active":
-            edit_message(chat_id, message_id, "⚠️ This giveaway's winner has already been drawn.", cancel_kb())
             return
         reveal_text = draw_winner(gid, gw)
         edit_message(chat_id, message_id, reveal_text, cancel_kb())
@@ -776,7 +821,7 @@ class handler(BaseHTTPRequestHandler):
                 uid = msg["from"]["id"]
                 track_user(msg["from"])
                 if is_banned(uid) and not is_admin(uid):
-                    send_message(msg["chat"]["id"], "🚫 You have been banned from using this bot Contact Owner To Join @GpsirEra .")
+                    send_message(msg["chat"]["id"], "🚫 You have been banned from using this bot.")
                 else:
                     handle_text_message(msg["chat"]["id"], uid, msg["text"])
             elif "callback_query" in update:
@@ -784,7 +829,7 @@ class handler(BaseHTTPRequestHandler):
                 uid = cb["from"]["id"]
                 track_user(cb["from"])
                 if is_banned(uid) and not is_admin(uid):
-                    answer_callback(cb["id"], "🚫 You have been banned from using this bot Contact Owner To Join @GpsirEra .", alert=True)
+                    answer_callback(cb["id"], "🚫 You have been banned from using this bot.", alert=True)
                 else:
                     handle_callback(cb)
             elif "chat_join_request" in update:
