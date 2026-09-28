@@ -32,9 +32,9 @@ CHANNEL1_ID = int(os.environ["CHANNEL1_ID"])
 CHANNEL2_ID = int(os.environ["CHANNEL2_ID"])
 CHANNEL3_ID = int(os.environ["CHANNEL3_ID"])
 FORCE_JOIN_CHANNELS = [
-    {"name": "Gpsir Giveaway Channel", "chat_id": CHANNEL3_ID, "link": "https://t.me/+0w8ATlAukVA1MWU1", "request_based": True},
-    {"name": "Gpsir ha4k Channel", "chat_id": CHANNEL1_ID, "link": "https://t.me/+74PC9DgmtN84NzFl"},
-    {"name": "Gpsir Chat Group", "chat_id": CHANNEL2_ID, "link": "https://t.me/+VXs73pFfyEphMzJl"},
+    {"name": "Gpsir Giveaway Channel", "chat_id": CHANNEL3_ID, "link": "https://t.me/+JnxnXtxpsmg2MjBl", "request_based": True},
+    {"name": "Gpsir ha4k Channel", "chat_id": CHANNEL1_ID, "link": "https://t.me/black_hats_ops"},
+    {"name": "Gpsir Chat Group", "chat_id": CHANNEL2_ID, "link": "https://t.me/+NPI9QsQiETBjNjI1"},
 ]
 
 WELCOME_PHOTO_URL = "https://i.ibb.co/WpcdVFP0/file-0000000079dc81f5b57e72408da59449.png"
